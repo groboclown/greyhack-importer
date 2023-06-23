@@ -1,0 +1,793 @@
+// Grey Hack script to unpack an exported file and compile it in the game.
+// Version 2.1.0
+
+if params.len > 0 and (params[0] == "-h" or params[0] == "--help") then
+    exit("Usage: make (packed source file)")
+end if
+
+
+// ==========================================================================
+// For easy mock testing
+GetFile = function(name)
+    return get_shell.host_computer.File(name)
+end function
+TouchFile = function(parent, name)
+    return get_shell.host_computer.touch(parent, name)
+end function
+CreateFolder = function(parent, name)
+    return get_shell.host_computer.create_folder(parent, name)
+end function
+CreateUser = function(username, password)
+    return get_shell.host_computer.create_user(username, password)
+end function
+CreateGroup = function(username, group)
+    return get_shell.host_computer.create_group(username, group)
+end function
+Compile = function(source_file, outdir)
+    return get_shell.build(source_file, outdir)
+end function
+LaunchProgram = function(cmd, args)
+    if args == null then args = []
+    return get_shell.launch(cmd, args.join(" "))
+end function
+
+
+DEBUG = function(msg)
+    // print("<color=#707070> [DEBUG] " + msg + "</color>")
+end function
+INFO = function(msg)
+    print("<color=#a0a0a0>" + msg + "</color>")
+end function
+TEMP_DIR = home_dir + "/" + ".tmp"
+
+// ==========================================================================
+// Slimmed down to only the necessities.
+
+FileLib = {}
+FileLib.BinaryReader = {}
+
+// FileLib.BinaryReader.New() Creates a new binary reader.
+//
+// The argument can be a file-like object (a map with a 'get_content' member)
+// or the contents as a string.
+// Returns "null" on error.
+FileLib.BinaryReader.New = function(fileOrContents)
+    if fileOrContents == null then return null
+    if not (fileOrContents isa string) then fileOrContents = fileOrContents.get_content
+    ret = new FileLib.BinaryReader
+    ret.content = fileOrContents
+
+    // read_pos the next character position in the content list.
+    ret.read_pos = 0
+
+    // buffer_bit_size The number of bits of data for each number read into
+    //   the buffer.  This cannot be greater than 31.
+    ret.buffer_bit_size = 8
+
+    // buffer the raw numbers transcoded from the content,
+    //   appended to the end as read.  Each
+    ret.buffer = []
+
+    // remaining_bits number of bits in the (partial_data) value.
+    ret.remaining_bits = 0
+    // partial_data a value that used to be in the buffer, which had some
+    // data pulled off of it.  It has (remaining_bits) number of bits left.
+    ret.partial_data = 0
+    return ret
+end function
+
+// FileLib.BinaryReader.is_ignored() Is the given character ignored for the encoding?
+//
+// Returns true if the character should be ignored for the purposes of the binary encoding.
+FileLib.BinaryReader.is_ignored = function(c)
+    // Ignore whitespace
+    ic = c.code
+    return c == " " or ic == 10 or ic == 13 or ic == 9
+end function
+
+// FileLib.BinaryReader.HasMore() is there more data to read?
+FileLib.BinaryReader.HasMore = function()
+    // If there's buffered data, then there's stuff pending to 
+    if self.remaining_bits > 0 or self.buffer.len > 0 then return true
+    // Is this a valid read position?
+    while self.read_pos < self.content.len
+        // Is this a non-ignored character?
+        if not self.is_ignored(self.content[self.read_pos]) then return true
+        // It's ignored.  Advance and see if the next one is ignored.
+        self.read_pos = self.read_pos + 1
+    end while
+    return false
+end function
+
+// FileLib.BinaryReader.buffer_bit_count() Counts the number of bits of data in the buffer
+FileLib.BinaryReader.buffer_bit_count = function()
+    return self.remaining_bits + (self.buffer.len * self.buffer_bit_size)
+end function
+
+// FileLib.BinaryReader.fill_buffer() Load up data into the buffer.
+//
+// Returns true if there is enough data in the buffer
+//
+// Calls into load_buffer to ensure at least (bit_count) bits are in the
+// buffer.
+FileLib.BinaryReader.fill_buffer = function(bit_count)
+    while self.buffer_bit_count < bit_count
+        res = self.load_buffer()
+        if res == null or res <= 0 then
+            // ran out of data
+            return false
+        end if
+    end while
+    return true
+end function
+
+// FileLib.BinaryReader.load_buffer() load numbers into the buffer
+// Abstract function - must be implemented by the subclass.
+//
+// (buffer) stores numbers that have (buffer_bit_size) bits of useful
+// data in each one.  Calls to the binary reader will consume bits out of
+// the buffer.  Each call to this laod_buffer will load whole
+// number of (buffer_bit_size) bit values.  That is, if (buffer_bit_size)
+// is 12, then each call will append 0 or more values to the end of the
+// (buffer), each one with 12 useful bits of data.
+//
+// The call must ensure that the (buffer) values do not have extra data
+// beyond the (buffer_bit_size); that is, if the number of bits is 3 (0-7),
+// then each value must be restricted to the values 0-7.  This eliminates
+// extra math operations.
+//
+// Returns the number of values added to the (buffer).
+FileLib.BinaryReader.load_buffer = function()
+    return 0
+end function
+
+// binary operation optimizations...
+FileLib._pow2 = [
+    1,          // << 0
+    2,          // << 1
+    4,          // << 2
+    8,          // << 3
+    16,         // << 4
+    32,         // << 5
+    64,         // << 6
+    128,        // << 7
+    256,        // << 8
+    512,        // << 9
+    1024,       // << 10
+    2048,       // << 11
+    4096,       // << 12
+    8192,       // << 13
+    16384,      // << 14
+    32768,      // << 15
+    65536,      // << 16
+    131072,     // << 17
+    262144,     // << 18
+    524288,     // << 19
+    1048576,    // << 20
+    2097152,    // << 21
+    4194304,    // << 22
+    8388608,    // << 23
+    16777216,   // << 24
+    33554432,   // << 25
+    67108864,   // << 26
+    134217728,  // << 27
+    268435456,  // << 28
+    536870912,  // << 29
+    1073741824, // << 30
+    2147483648, // << 31
+    4294967296, // << 32
+]
+
+FileLib.BinaryReader._nextNbits = function(n)
+    if not self.fill_buffer(n) then return null
+    while self.remaining_bits < n
+        // Need to add more bits.
+        // Not performing buffer checks, because fill_buffer should have
+        // given us at least 8 more bits to work with in the buffer +
+        // remaining bits.
+        // DEBUG("fetching " + self.buffer[0])
+        self.remaining_bits = self.remaining_bits + self.buffer_bit_size
+        self.partial_data = ((self.partial_data * FileLib._pow2[self.buffer_bit_size]) + self.buffer[0])
+        self.buffer.remove(0)
+    end while
+    // Strip off the top n bits
+    ret = floor(self.partial_data / FileLib._pow2[self.remaining_bits - n]) % FileLib._pow2[n]
+    // DEBUG("extracted " + n + " bits == " + ret)
+    if self.remaining_bits > n then
+        self.remaining_bits = self.remaining_bits - n
+        self.partial_data = self.partial_data % FileLib._pow2[self.remaining_bits]
+    else
+        // must be == n...
+        self.remaining_bits = 0
+        self.partial_data = 0
+    end if
+    return ret
+end function
+
+// FileLib.BinaryReader.NextBit() reads the next 0 or 1 (bit) value, or null
+FileLib.BinaryReader.NextBit = function()
+    return self._nextNbits(1)
+end function
+
+// FileLib.BinaryReader.NextUInt4() reads the next uint8 value, or null
+FileLib.BinaryReader.NextUInt4 = function()
+    return self._nextNbits(4)
+end function
+
+// FileLib.BinaryReader.NextUInt8() reads the next uint8 value, or null
+FileLib.BinaryReader.NextUInt8 = function()
+    return self._nextNbits(8)
+end function
+
+// FileLib.BinaryReader.NextUInt12() reads the next uint12 value, or null
+FileLib.BinaryReader.NextUInt12 = function()
+    return self._nextNbits(12)
+end function
+
+// FileLib.BinaryReader.NextUInt16BE() reads the next uint16 value, or null
+//
+// Uses "big endian" formatting.
+FileLib.BinaryReader.NextUInt16BE = function()
+    return self._nextNbits(16)
+end function
+
+FileLib.BinReader = {}
+FileLib.BinReader.New = function(data)
+    ret = FileLib.BinaryReader.New("")
+    if ret == null then return null
+	ret.buffer_bit_size = 8
+    ret.content = data
+    ret.content_pos = 0
+    ret.load_buffer = @FileLib.BinReader.decoder
+    return ret
+end function
+FileLib.BinReader.decoder = function()
+    if self.content_pos >= self.content.len then return 0
+    self.buffer.push(self.content[self.content_pos])
+    self.content_pos = self.content_pos + 1
+    return 1
+end function
+
+FileLib.A85Reader = {}
+FileLib.A85Reader._zero = "!".code
+FileLib.A85Reader._85 = "u".code
+FileLib.A85Reader._4z = "z".code
+FileLib.A85Reader._4y = "y".code
+
+FileLib.A85Reader.New = function(fileOrContents)
+    ret = FileLib.BinaryReader.New(fileOrContents)
+    if ret == null then return null
+	ret.buffer_bit_size = 8
+	ret.load_buffer = @FileLib.A85Reader.decode_bytes
+	// For padding purposes, an implied 'uuuu' is added to the end of the
+	// source content.
+	ret.content = ret.content + "uuuu"
+	return ret
+end function
+
+
+FileLib.A85Reader.decode_bytes = function()
+	currx = 0
+	curr = [0, 0, 0, 0, 0]
+	ret = 0
+	while self.read_pos < self.content.len
+		c = self.content[self.read_pos]
+		self.read_pos = self.read_pos + 1
+		x = c.code
+		if x >= FileLib.A85Reader._zero and x <= FileLib.A85Reader._85 then
+			curr[currx] = x
+			currx = currx + 1
+			if currx == 5 then
+				// Filled up the next bits.
+				acc = 0
+				for x in curr
+					acc = 85 * acc + (x - FileLib.A85Reader._zero)
+				end for
+				self.buffer.push(floor(acc / 16777216) % 256)
+				self.buffer.push(floor(acc / 65536) % 256)
+				self.buffer.push(floor(acc / 256) % 256)
+				self.buffer.push(acc % 256)
+				ret = 4
+				break
+			end if
+		else if x == FileLib.A85Reader._4z then
+			// equivalent to 4 0s.
+			self.buffer.push(0)
+			self.buffer.push(0)
+			self.buffer.push(0)
+			self.buffer.push(0)
+			ret = 4
+			break
+		else if x == FileLib.A85Reader._4y then
+			// equivalent to 4 0x20s.
+			self.buffer.push(32)
+			self.buffer.push(32)
+			self.buffer.push(32)
+			self.buffer.push(32)
+			ret = 4
+			break
+		// else ignore the character
+		end if
+	end while
+
+	// Check for if there's possible padding to consume
+	left = self.content.len - self.read_pos
+	if left < 5 then
+		// Remove the padding.
+		padding = 4 - left
+		if padding > 0 then
+			self.buffer = self.buffer[:-padding]
+			ret = ret - padding
+		end if
+		self.read_pos = self.content.len
+	end if
+
+	return ret
+end function
+
+// ==========================================================================
+
+// Ascii() reads an ascii-encoded string value, with a 16-bit character length prefix format.
+FileLib.BinaryReader.Ascii = function()
+    size = self.NextUInt16BE
+    ret = ""
+    if size > 0 then
+        for i in range(0, size - 1)
+            ret = ret + char(self.NextUInt8)
+        end for
+    end if
+    return ret
+end function
+
+// Utf16() reads a simplified utf-16 encoded string value, with a 16-bit character length prefix format.
+// The utf-16 characters are restricted to being exactly 2 bytes each.
+FileLib.BinaryReader.Utf16 = function()
+    size = self.NextUInt16BE
+    ret = ""
+    if size > 0 then
+        for i in range(0, size - 1)
+            ret = ret + char(self.NextUInt16BE)
+        end for
+    end if
+    return ret
+end function
+    
+// String() Looks up the next item as a string reference by index.
+FileLib.BinaryReader.String = function()
+    idx = self.NextUInt16BE
+    if self.strings.hasIndex(idx) then
+        return self.strings[idx]
+    end if
+    exit("Invalid file: bad string index " + idx)
+end function
+
+// Skip() Skip a number of bytes in the stream.
+FileLib.BinaryReader.Skip = function(bytes)
+    if bytes > 0 then
+        for _ in range(0, bytes - 1)
+            self.NextUInt8
+        end for
+    end if
+end function
+
+// ==========================================================================
+// The file format is essentially a compressed tar file + build instructions.
+
+file_version = 1
+MAX_SUPPORTED_FILE_VERSION = 2
+test_dir = TEMP_DIR + "/tests"
+REPLACED_WITH_HOME = "<[HOME]>"
+
+// ASCII encoded string.
+blockAsciiFunc = function(tar, size)
+    str_idx = tar.NextUInt16BE
+    text = tar.Ascii
+    tar.strings[str_idx] = text
+    DEBUG("Unpacked ASCII string " + str_idx + ": " + text[:10])
+end function
+
+// UTF-16 encoded string.
+blockUtf16Func = function(tar, size)
+    str_idx = tar.NextUInt16BE
+    text = tar.Utf16
+    tar.strings[str_idx] = text
+    DEBUG("Unpacked UTF16 string " + str_idx + ": " + text[:10])
+end function
+
+// ASCII encoded string + replace with home
+blockAsciiReplaceHomeFunc = function(tar, size)
+    str_idx = tar.NextUInt16BE
+    text = tar.Ascii().replace(REPLACED_WITH_HOME, home_dir)
+    tar.strings[str_idx] = text
+    DEBUG("Unpacked ASCII/HOME string " + str_idx + ": " + text[:10])
+end function
+
+// UTF-16 encoded string + replace with home
+blockUtf16ReplaceHomeFunc = function(tar, size)
+    str_idx = tar.NextUInt16BE
+    text = tar.Utf16.replace(REPLACED_WITH_HOME, home_dir)
+    tar.strings[str_idx] = text
+    DEBUG("Unpacked UTF16/HOME string " + str_idx + ": " + text[:10])
+end function
+
+// Relative-to-home path.
+// Paths are always ascii-encoded.
+blockRelHomeFunc = function(tar, size)
+    str_idx = tar.NextUInt16BE
+    text = tar.Ascii
+    if text.len > 0 then
+        text = home_dir + "/" + text
+    else
+        text = home_dir
+    end if
+    tar.strings[str_idx] = text
+    DEBUG("Unpacked Rel Home string " + str_idx + ": " + text[:10])
+end function
+
+// Folder
+blockFolderFunc = function(tar, size)
+    parent = tar.String
+    name = tar.String
+    DEBUG("Creating [" + name + "] in folder [" + parent + "]")
+    out = GetFile(parent + "/" + name)
+    if out == null then
+        res = CreateFolder(parent, name)
+        if res != 1 then exit("Failed to create folder [" + parent + "/" + name + "]")
+        INFO("- created folder [" + parent + "/" + name + "]")
+    else
+        INFO("- created folder [" + parent + "/" + name + "] (skipped - already exists)")
+    end if
+end function
+
+// File
+blockFileFunc = function(tar, size)
+    base_dir = tar.String
+    name = tar.String
+    contents = tar.String
+
+    out = GetFile(base_dir + "/" + name)
+    if out == null then
+        res = TouchFile(base_dir, name)
+        if res != 1 then exit(res)
+        out = GetFile(base_dir + "/" + name)
+        if out == null then exit("Failed to create file " + base_dir + "/" + name)
+    end if
+    out.set_content(contents)
+    INFO("- created file [" + base_dir + "/" + name + "] with " + contents.len + " characters")
+end function
+
+// chmod
+blockChmodFunc = function(tar, size)
+    fqn = tar.String
+    perms = tar.String
+    recurse = tar.NextUInt8
+
+    out = GetFile(fqn)
+    if out == null then exit("Could not find file " + fqn)
+    res = out.chmod(perms, recurse)
+    INFO("- chmod [" + perms + "] [" + out + "]")
+end function
+
+// chown user
+blockChownFunc = function(tar, size)
+    fqn = tar.String
+    username = tar.String
+    recurse = tar.NextUInt8
+
+    out = GetFile(fqn)
+    if out == null then exit("Could not find file " + fqn)
+    out.set_owner(username, recurse)
+    INFO("- chown [" + username + "] [" + out + "]")
+end function
+
+// chown group
+blockChownGroupFunc = function(tar, size)
+    fqn = tar.String
+    group = tar.String
+    recurse = tar.NextUInt8
+
+    out = GetFile(fqn)
+    if out == null then exit("Could not find file " + fqn)
+    out.set_group(group, recurse)
+    INFO("- chgroup [" + group + "] [" + out + "]")
+end function
+
+// New User
+blockNewUserFunc = function(tar, size)
+    username = tar.String
+    password = tar.String
+
+    res = CreateUser(username, password)
+    if res != 1 then exit(res)
+    INFO("- created user [" + username + "]")
+end function
+
+// Assign group to user
+blockAssignGroupFunc = function(tar, size)
+    username = tar.String
+    group = tar.String
+
+    res = CreateGroup(username, group)
+    if res != 1 then exit(res)
+    INFO("- created group [" + group + "] for [" + username + "]")
+end function
+
+// build
+// Build process: compile into the temporary directory, then
+// move into the expected location.  The expected location directory must
+// exist first.  The file is copied to the temporary directory so that
+// we know the name of the compiled-to file.
+blockBuildFunc = function(tar, size)
+    source_fqn = tar.String
+    DEBUG("build source: " + source_fqn + ";")
+    target_path_fqn = tar.String
+    DEBUG("build target dir: " + target_path_fqn + ";")
+    target_name = tar.String
+    DEBUG("build target name: " + target_name + ";")
+
+    src_out = GetFile(source_fqn)
+    if src_out == null then exit("No file " + source_fqn + " to build.")
+    src_out.copy(TEMP_DIR, "source.src")
+    res = Compile(TEMP_DIR + "/source.src", TEMP_DIR)
+    if res != "" and res != null then exit("Failed building " + source_fqn + ": " + res)
+    out = GetFile(TEMP_DIR + "/source")
+    if out == null then exit("Did not build " + source_fqn)
+    res = out.move(target_path_fqn, target_name)
+    if res != 1 then exit("Could not move file to " + target_path_fqn + "/" + target_name + ": " + res)
+    INFO("- compiled [" + src_out.path + "] to [" + target_path_fqn + "/" + target_name + "]")
+end function
+
+// test
+// Test process: put the source in a temporary directory, compile it,
+// then run it.
+blockTestFunc = function(tar, size)
+    test_index = tar.NextUInt16BE
+    name = tar.String
+    contents = tar.String
+
+    test_name = test_index + ".src"
+    test_fqn = globals.test_dir + "/" + test_name
+    test_exec = globals.test_dir + "/" + test_index
+    out = GetFile(test_fqn)
+    if out == null then
+        res = TouchFile(globals.test_dir, test_name)
+        if res != 1 then exit(res)
+        out = GetFile(test_fqn)
+        if out == null then exit("Failed to create file " + test_fqn)
+    end if
+    out.set_content(contents)
+    res = Compile(test_fqn, globals.test_dir)
+    if res != "" and res != null then exit("Failed building " + name + ": " + res)
+    out = GetFile(test_exec)
+    if out == null then exit("Did not build " + source_fqn)
+    INFO("Launching test " + name)
+    res = LaunchProgram(test_exec, null)
+    if res != 1 then exit("Test " + name + " failed")
+end function
+
+// launch
+// Launch a process.
+blockLaunchFunc = function(tar, size)
+    arg_count = tar.NextUInt8
+    cmd = tar.String
+    args = []
+    for _ in range(1, arg_count-1)
+        args.push(tar.String)
+    end for
+    res = LaunchProgram(cmd, args)
+    if res != 1 then exit("Failed running program: " + res)
+end function
+
+// copy
+blockCopyFunc = function(tar, size)
+    source_fqn = tar.String
+    DEBUG("copy source: " + source_fqn + ";")
+    target_path_fqn = tar.String
+    DEBUG("copy target dir: " + target_path_fqn + ";")
+    target_name = tar.String
+    DEBUG("copy target name: " + target_name + ";")
+
+    src = GetFile(source_fqn)
+    if src == null or src.is_folder then exit("No such file: " + source_fqn)
+    res = src.copy(target_path_fqn, target_name)
+    if res != 1 then exit("Failed to copy [" + source_fqn + "] to [" + target_path_fqn + "/" + target_name + "]")
+    INFO("- copied [" + source_fqn + "] to [" + target_path_fqn + "/" + target_name + "]")
+end function
+
+// move
+blockMoveFunc = function(tar, size)
+    source_fqn = tar.String
+    DEBUG("move source: " + source_fqn + ";")
+    target_path_fqn = tar.String
+    DEBUG("move target dir: " + target_path_fqn + ";")
+    target_name = tar.String
+    DEBUG("move target name: " + target_name + ";")
+
+    src = GetFile(source_fqn)
+    if src == null or src.is_folder then exit("No such file: " + source_fqn)
+    res = src.move(target_path_fqn, target_name)
+    if res != 1 then exit("Failed to move [" + source_fqn + "] to [" + target_path_fqn + "/" + target_name + "]")
+    INFO("- moved [" + source_fqn + "] to [" + target_path_fqn + "/" + target_name + "]")
+end function
+
+// delete
+blockDeleteFunc = function(tar, size)
+    path_fqn = tar.String
+    DEBUG("delete file: " + path_fqn + ";")
+
+    f = GetFile(path_fqn)
+    if f == null or f.is_folder then exit("No such file: " + path_fqn)
+    res = f.delete
+    if res != 1 then exit("Failed to delete [" + path_fqn + "]")
+
+    INFO("deleted file [" + path_fqn + "]")
+end function
+
+BLOCK_HANDLERS = {
+    // BLOCK_HEADER = 0
+    // 0: @blockHeaderFunc,
+
+    // BLOCK_ASCII = 1
+    1: @blockAsciiFunc,
+
+    // BLOCK_UTF16 = 2
+    2: @blockUtf16Func,
+
+    // BLOCK_REL_HOME = 3
+    3: @blockRelHomeFunc,
+
+    // BLOCK_ASCII_REPLACED_HOME = 4
+    4: @blockAsciiReplaceHomeFunc,
+
+    // BLOCK_UTF16_REPLACED_HOME = 5
+    5: @blockUtf16ReplaceHomeFunc,
+    
+    // BLOCK_FOLDER = 20
+    20: @blockFolderFunc,
+
+    // BLOCK_FILE = 21
+    21: @blockFileFunc,
+
+    // BLOCK_CHMOD = 24
+    24: @blockChmodFunc,
+
+    // BLOCK_CHOWN = 25
+    25: @blockChownFunc,
+    
+    // BLOCK_CHGROUP = 26
+    26: @blockChownGroupFunc,
+
+    // BLOCK_NEW_USER = 40
+    40: @blockNewUserFunc,
+
+    // BLOCK_NEW_GROUP = 41
+    41: @blockAssignGroupFunc,
+
+    // BLOCK_BUILD = 80
+    80: @blockBuildFunc,
+
+    // BLOCK_TEST = 81
+    81: @blockTestFunc,
+
+    // BLOCK_LAUNCH = 82
+    82: @blockLaunchFunc,
+
+    // BLOCK_COPY = 83
+    83: @blockCopyFunc,
+
+    // BLOCK_MOVE = 84
+    84: @blockMoveFunc,
+
+    // BLOCK_DELETE = 85
+    85: @blockDeleteFunc,
+}
+
+// ==========================================================================
+
+if params.len != 1 then exit("Error: requires an argument containing the encoded make file to build.")
+
+name = params[0]
+if name[0] != "/" then
+    // current_path just points to the program's directory.
+    name = home_dir + "/" + name
+end if
+source_file = GetFile(name)
+if source_file == null then exit("Could not find source file " + params[0])
+if source_file.is_folder or source_file.is_binary then exit("Argument is not a text file: " + params[0])
+reader = FileLib.A85Reader.New(source_file)
+if reader == null then
+    exit("Could not find file " + params[0])
+end if
+INFO("Unpacking " + source_file.path)
+
+handleDataBlocks = function(tar)
+    // Get the kind of block
+    block_type = tar.NextUInt8
+    block_size = tar.NextUInt16BE
+    if block_type == null or block_size == null then return true
+    if BLOCK_HANDLERS.hasIndex(block_type) then
+        DEBUG("Unpacking block type " + block_type)
+        BLOCK_HANDLERS[block_type](tar, block_size)
+    else
+        INFO("Unknown block type " + block_type)
+        // Do not fail; this could mean a file format that isn't supported fully.
+        // Read in this block's bytes.
+        tar.Skip(block_size)
+    end if
+    return false
+end function
+
+// Read the header block first.  If it's compressed, then it'll need to be re-loaded.
+header_type = reader.NextUInt8
+header_size = reader.NextUInt16BE
+if header_type != 0 then exit("Invalid file format")
+file_version = reader.NextUInt16BE
+header_size = reader.NextUInt16BE
+if file_version == 2 then
+    // Need to uncompress the data after the header, and re-construct the reader from
+    // the result.
+    reader.Skip(header_size)
+
+    // Read the compression table
+    blockDecodeTable = []
+    // Encoded as (item length - 1, item count) (index 0) ...
+    // The last one is has count 0.
+    while true
+        item_len = reader.NextUInt4 + 1
+        item_count = reader.NextUInt4
+        if item_count == 0 then break
+        while item_count > 0
+            //debug_text = ""
+            b = []
+            for i in range(1, item_len)
+                v = reader.NextUInt8
+                //debug_text = debug_text + " " + v
+                b.push(v)
+            end for
+            // DEBUG("d[" + blockDecodeTable.len + "] =" + debug_text)
+            blockDecodeTable.push(b)
+            item_count = item_count - 1
+        end while
+    end while
+    lastDecodeEntry = blockDecodeTable.len
+    // DEBUG("d[final] is " + lastDecodeEntry)
+
+    // decode the remaining values.
+    nextReport = 10000
+    uncompressed = []
+    while true
+        index = reader.NextUInt12
+        if index == null or index == lastDecodeEntry then break
+        // DEBUG("[] = " + index)
+        // Note that this array concatenation gets slower the bigger the list.
+        uncompressed = uncompressed + blockDecodeTable[index]
+        if uncompressed.len > nextReport then
+            print("<color=#707070>Deflated " + uncompressed.len + " bytes...</color>")
+            nextReport = uncompressed.len + 10000
+        end if
+    end while
+    reader = FileLib.BinReader.New(uncompressed)
+
+    // Now read the first block's first two bytes again.
+    header_type = reader.NextUInt8
+    DEBUG("Inner header type: " + header_type)
+    if header_type != 0 then exit("Invalid file format")
+    header_size = reader.NextUInt16BE
+    DEBUG("Inner header size: " + header_size)
+    file_version = reader.NextUInt16BE
+    DEBUG("Inner header version: " + file_version)
+    header_size = reader.NextUInt16BE
+    DEBUG("Inner header inner size: " + header_size)
+end if
+
+reader.Skip(header_size)
+if file_version > MAX_SUPPORTED_FILE_VERSION then
+    exit("Unsupported file format: " + file_version)
+end if
+
+// Need to setup custom attributes...
+reader.strings = {}
+
+while true
+    if handleDataBlocks(reader) then break
+end while
