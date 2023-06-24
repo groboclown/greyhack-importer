@@ -114,6 +114,10 @@ The compression header contains a series of value lookup blocks.  A lookup block
 The encoded body contains a series of 12-bit lookup values (big endian), with lookup value 4095 reserved for an "end of stream" marker.  The decoder reads the 12 bits, uses that as the index in the lookup blocks, and inserts the lookup block data into the resulting decoded stream.
 
 
+# Developing
+
+The `ghtar.py` file is transformed via Black for a consistent style.  It is also run through MyPy to check for type errors.
+
 # License
 
 Released under the [MIT License](LICENSE).

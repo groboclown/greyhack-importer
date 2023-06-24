@@ -518,7 +518,7 @@ class FileManager:
                 source.contents = raw
             if source.contents is not None and source.is_source:
                 if not self._clean_source(source=source, discovered_sources=to_scan):
-                    log_error("Failed to clean source for {source}", source.local_path)
+                    log_error("Failed to clean source for {source}", source=source.local_path)
                     is_ok = False
                 else:
                     if source.requested_game_path:
@@ -843,6 +843,10 @@ class Blocks:
                     # A test file.  Use the test content of an import line to the file.
                     ref_id = self._test_files[name]
                     game_file = self._files.get_game_file_by_ref(ref_id, True)
+                    if game_file is None:
+                        log_error("Failed to find a game file for id {id}", id=ref_id)
+                        self._setup_problems = True
+                        continue
                     if game_file.startswith("~/"):
                         # home_dir is built to not have a trailing '/'.
                         game_file = REPLACED_WITH_HOME + game_file[1:]
