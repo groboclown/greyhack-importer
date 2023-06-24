@@ -1,0 +1,13 @@
+// Grey Script tool for reading and printing a JSON file.
+
+// Import the library file relative to the location of this source
+// file.  The import tool will handle the implicit loading into the
+// grey tar file, and place the file in a valid location, and change
+// this line to reference the imported location.
+import_code("json.ms")
+
+filename = params[0]
+file = get_shell.host_computer.File(filename)
+
+// Parse the file as MiniScript data, then convert it back out to a json file.
+print(toJSON(parse(file.get_content)))

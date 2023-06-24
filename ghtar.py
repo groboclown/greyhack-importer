@@ -27,7 +27,18 @@ Example input:
 ]
 """
 
-from typing import Sequence, List, Dict, Mapping, Set, Tuple, Callable, Optional, Any
+from typing import (
+    Sequence,
+    List,
+    Dict,
+    Mapping,
+    Set,
+    Tuple,
+    Callable,
+    Union,
+    Optional,
+    Any,
+)
 import os
 import sys
 import glob
@@ -272,18 +283,84 @@ def mk_block_delete(file_index: int) -> bytes:
 # neccesary to support compiling.
 
 
-class MappedFile:
-    """A file mapped into the local computer space."""
+class StoredFile:
+    """A file mapped into the local computer space.
 
-    __slots__ = ("path", "contents", "is_home_replaced", "requested_path")
+    The file can be located on the physical media, or just in the bundle file.
+    The file can also have a specific path it must be located at in the
+    game computer, or can be a synthetic location.  It might also be in
+    a synthetic location if it has multiple needs.
+    """
+
+    __slots__ = (
+        "ref_id",
+        "local_path",
+        "contents",
+        "is_home_replaced",
+        "is_source",
+        "requested_game_path",
+        "synthetic_game_path",
+    )
+
+    _REF_INDEX = 0
 
     def __init__(
-        self, *, path: str, contents: str, is_home_replaced: bool, requested_path: str
+        self,
+        *,
+        local_path: Optional[str],
+        contents: Optional[str],
+        is_home_replaced: bool,
+        is_source: bool,
+        requested_game_path: Optional[str],
+        synthetic_game_path: Optional[str],
     ) -> None:
-        self.path = path
+        self.ref_id = StoredFile._REF_INDEX
+        StoredFile._REF_INDEX += 1
+        self.local_path = local_path
         self.contents = contents
         self.is_home_replaced = is_home_replaced
-        self.requested_path = requested_path
+        self.is_source = is_source
+        self.requested_game_path = requested_game_path
+        self.synthetic_game_path = synthetic_game_path
+
+    def is_shared_contents(self, other: "StoredFile") -> bool:
+        """Are the two stored file representations sharing the same contents?"""
+        if self.is_home_replaced != other.is_home_replaced:
+            # They must either both replace the home value or not.
+            return False
+        if self.contents is None or other.contents is None:
+            return (
+                self.local_path == other.local_path
+                and self.is_source == other.is_source
+            )
+        return self.contents == other.contents
+
+    def is_same_source(self, local_path: str) -> bool:
+        """Is this a source file, and point to the same local path?"""
+        if not self.is_source or not self.local_path:
+            return False
+        return os.path.abspath(self.local_path) == os.path.abspath(local_path)
+
+    def __repr__(self) -> str:
+        return (
+            f"File(requested:{self.requested_game_path}, "
+            f"synthetic: {self.synthetic_game_path}, "
+            f"local: {self.local_path})"
+        )
+
+
+class ResolvedFile:
+    """A file resolved to a location in the game computer."""
+
+    __slots__ = ("game_path", "contents", "is_home_replaced", "ref_id")
+
+    def __init__(
+        self, *, game_path: str, contents: str, is_home_replaced: bool, ref_id: int
+    ) -> None:
+        self.ref_id = ref_id
+        self.game_path = game_path
+        self.contents = contents
+        self.is_home_replaced = is_home_replaced
 
 
 class FileManager:
@@ -303,12 +380,7 @@ class FileManager:
     references the file relative to that source file's location.
     """
 
-    __slots__ = (
-        "text_contents",
-        "text_files",
-        "source_files",
-        "_cleaned_source_map",
-    )
+    __slots__ = ("stored",)
 
     IMPORT_RE = re.compile(r'^\s*import_code\s*\(\s*"([^"]+)"\s*\)\s*$')
     GOOD_SRC_FILE_CHARS = (
@@ -316,145 +388,216 @@ class FileManager:
     )
 
     def __init__(self) -> None:
-        self.text_contents: Dict[str, str] = {}
-        self.text_files: Dict[str, str] = {}
-        self.source_files: Dict[str, str] = {}
+        self.stored: List[StoredFile] = []
 
-        # Map of original name -> clean name
-        self._cleaned_source_map: Dict[str, str] = {}
+    def get_game_file_ref(self, game_file: str) -> Optional[int]:
+        """Get the stored file reference with the explicitly requested game file."""
+        for file in self.stored:
+            if file.requested_game_path == game_file:
+                return file.ref_id
+        return None
+
+    def get_game_file_by_ref(
+        self, ref_id: int, prefer_synthetic: bool
+    ) -> Optional[str]:
+        """Get the game file name for the reference id."""
+        for file in self.stored:
+            if file.ref_id == ref_id:
+                if file.synthetic_game_path and prefer_synthetic:
+                    return file.synthetic_game_path
+                if file.requested_game_path and not prefer_synthetic:
+                    return file.requested_game_path
+                if file.requested_game_path:
+                    return file.requested_game_path
+                if file.synthetic_game_path:
+                    return file.synthetic_game_path
+                return None
+        return None
+
+    def has_game_file(self, game_file: str) -> bool:
+        """Is this game file location known?  Does not inspect synthetic
+        paths."""
+        return self.get_game_file_ref(game_file) is not None
 
     def add_text_contents(self, game_file: str, contents: str) -> bool:
         """Marks the game file as containing the given contents."""
-        if (
-            game_file in self.text_contents
-            or game_file in self.text_files
-            or game_file in self.source_files
-        ):
+        if self.has_game_file(game_file):
             log_error("Duplicate game file listed: {game_file}", game_file=game_file)
             return False
-        self.text_contents[game_file] = contents
+        self.stored.append(
+            StoredFile(
+                local_path=None,
+                contents=contents,
+                is_home_replaced=False,
+                is_source=False,
+                requested_game_path=game_file,
+                synthetic_game_path=None,
+            )
+        )
         return True
 
-    def add_local_text_file(self, game_file: str, local_file: str) -> bool:
-        """Loads the local file as a text file, for adding into the game file's location."""
-        if (
-            game_file in self.text_contents
-            or game_file in self.text_files
-            or game_file in self.source_files
-        ):
+    def add_local_text_file(self, game_file: str, local_file: str) -> Optional[int]:
+        """Loads the local file as a text file, for adding into the game file's location.
+        Returns a reference to the file on success, or None on error."""
+        if self.has_game_file(game_file):
             log_error("Duplicate game file listed: {game_file}", game_file=game_file)
-            return False
+            return -1
         if not os.path.isfile(local_file):
             log_error("Could not find file '{local_file}'", local_file=local_file)
-            return False
-        self.text_files[game_file] = local_file
-        return True
+            return -1
+        ret = StoredFile(
+            local_path=local_file,
+            contents=None,
+            is_home_replaced=False,
+            is_source=False,
+            requested_game_path=game_file,
+            synthetic_game_path=None,
+        )
+        self.stored.append(ret)
+        if ret is None:
+            return None
+        return ret.ref_id
 
-    def add_local_source_file(self, game_file: str, local_file: str) -> bool:
-        """Loads the local file as a text file, for adding into the game file's location."""
-        if (
-            game_file in self.text_contents
-            or game_file in self.text_files
-            or game_file in self.source_files
-        ):
+    def add_local_source_file(
+        self, game_file: Optional[str], local_file: str
+    ) -> Optional[int]:
+        """Loads the local file as a source file.  It will be potentially extracted into
+        a synthetic location.
+        Returns a reference to the file on success, or None on error."""
+        ret = self._inner_add_local_source_file(game_file, local_file)
+        if ret is None:
+            return None
+        return ret.ref_id
+
+    def _inner_add_local_source_file(
+        self, game_file: Optional[str], local_file: str
+    ) -> Optional[StoredFile]:
+        """Loads the local file as a source file.  It will be potentially extracted into
+        a synthetic location."""
+        if game_file and self.has_game_file(game_file):
             log_error("Duplicate game file listed: {game_file}", game_file=game_file)
-            return False
+            return None
         if not os.path.isfile(local_file):
             log_error("Could not find file '{local_file}'", local_file=local_file)
-            return False
-        self.source_files[game_file] = local_file
-        self._cleaned_source_map[game_file] = FileManager._clean_source_name(game_file)
-        return True
+            return None
+        ret = StoredFile(
+            local_path=local_file,
+            contents=None,
+            # source files are defined by the spec to always have home replaced.
+            is_home_replaced=True,
+            is_source=True,
+            requested_game_path=game_file,
+            synthetic_game_path=None,
+        )
+        debug(
+            "Adding source file from {local_file} as id {id}",
+            local_file=local_file,
+            id=ret.ref_id,
+        )
+        self.stored.append(ret)
+        return ret
 
-    def get_clensed_source_file(self, game_file: str) -> str:
-        """Get the build-able source file game name.  If the file has never
-        been added as a source file, then it will return the passed-in name."""
-        return self._cleaned_source_map.get(game_file, game_file)
-
-    def process_file_map(self) -> Optional[Sequence[MappedFile]]:
+    def process_file_map(self) -> Optional[Sequence[ResolvedFile]]:
         """Process the files to construct the game file -> contents map.
-        Returns None on error.  The contents are (contents, has-home-replacement)"""
+        Returns None on error."""
+
         is_ok = True
 
-        debug(
-            "Handling raw text files {raw_text}, and source files {source_files}.  "
-            "Cleaned file names: {cleaned_map}",
-            raw_text=tuple(self.text_contents.keys()),
-            source_files=tuple(self.source_files.keys()),
-            cleaned_map=self._cleaned_source_map,
-        )
+        ret: Dict[str, ResolvedFile] = {}
+        to_scan: List[StoredFile] = list(self.stored)
 
-        # First off, the plain text files are added as-is.
-        ret: List[MappedFile] = [
-            MappedFile(path=k, requested_path=k, contents=v, is_home_replaced=False)
-            for k, v in self.text_contents.items()
-        ]
-        for game_file, local_file in self.text_files.items():
-            contents = FileManager._load_file(local_file)
-            if contents is None:
-                is_ok = False
-                contents = ""
-            debug("Added game file {game_file}", game_file=game_file)
-            ret.append(
-                MappedFile(
-                    path=game_file,
-                    requested_path=game_file,
-                    contents=contents,
-                    is_home_replaced=False,
-                )
-            )
+        while to_scan:
+            source = to_scan.pop()
+            debug("Handling source {name}", name=source)
+            if source.contents is None and source.local_path:
+                # Needs to be loaded and maybe processed.
+                raw = FileManager._load_file(source.local_path)
+                if raw is None:
+                    is_ok = False
+                    raw = ""
+                source.contents = raw
+            if source.contents is not None and source.is_source:
+                if not self._clean_source(source=source, discovered_sources=to_scan):
+                    log_error("Failed to clean source for {source}", source.local_path)
+                    is_ok = False
+                else:
+                    if source.requested_game_path:
+                        assert source.requested_game_path not in ret
+                        ret[source.requested_game_path] = ResolvedFile(
+                            ref_id=source.ref_id,
+                            game_path=source.requested_game_path,
+                            contents=source.contents,
+                            is_home_replaced=source.is_home_replaced,
+                        )
+                        debug(
+                            "put {requested_game_path} for {ref_id}",
+                            requested_game_path=source.requested_game_path,
+                            ref_id=source.ref_id,
+                        )
+                    if source.synthetic_game_path:
+                        assert source.synthetic_game_path not in ret
+                        ret[source.synthetic_game_path] = ResolvedFile(
+                            ref_id=source.ref_id,
+                            game_path=source.synthetic_game_path,
+                            contents=source.contents,
+                            is_home_replaced=source.is_home_replaced,
+                        )
+                        debug(
+                            "put {synthetic_game_path} for {ref_id}",
+                            synthetic_game_path=source.synthetic_game_path,
+                            ref_id=source.ref_id,
+                        )
+                    if (
+                        not source.requested_game_path
+                        and not source.synthetic_game_path
+                    ):
+                        # Need to create a new synthetic file.
+                        if source.local_path:
+                            basename = os.path.basename(source.local_path)
+                        else:
+                            basename = str(len(ret))
+                        idx = 0
+                        subname = f"{TEMP_DIR}/src/{idx}/{basename}"
+                        while subname in ret:
+                            idx += 1
+                            subname = f"{TEMP_DIR}/src/{idx}/{basename}"
+                        source.synthetic_game_path = FileManager._clean_source_name(
+                            subname
+                        )
+                        assert source.synthetic_game_path not in ret
+                        ret[source.synthetic_game_path] = ResolvedFile(
+                            ref_id=source.ref_id,
+                            game_path=source.synthetic_game_path,
+                            contents=source.contents,
+                            is_home_replaced=source.is_home_replaced,
+                        )
 
-        # Next is the source files.
-        # As files are parsed, more source files can be added.
-        remaining_to_parse: List[Tuple[str, str, str]] = [
-            (k, self._cleaned_source_map[k], v) for k, v in self.source_files.items()
-        ]
-        have_parsed: Set[str] = set()
-
-        while remaining_to_parse:
-            orig_game_file, game_file, local_file = remaining_to_parse.pop()
-            debug(
-                "Handling source file {local_file} -> {game_file}",
-                game_file=game_file,
-                local_file=local_file,
-            )
-            if game_file in have_parsed:
-                continue
-            have_parsed.add(game_file)
-            contents = FileManager._load_file(local_file)
-            if contents is None:
-                is_ok = False
-                contents = ""
             else:
-                contents = self._clean_source(
-                    local_file=local_file,
-                    contents=contents,
-                    discovered_sources=remaining_to_parse,
+                debug(
+                    "Skipping file; is source? {iss}, contents: {ct}",
+                    iss=source.is_source,
+                    ct=source.contents is None,
                 )
-            debug("Added game file {game_file}", game_file=game_file)
-            ret.append(
-                MappedFile(
-                    path=game_file,
-                    requested_path=orig_game_file,
-                    contents=contents,
-                    is_home_replaced=True,
-                )
-            )
 
         if is_ok:
-            return ret
+            return tuple(ret.values())
         return None
 
     def _clean_source(
         self,
         *,
-        local_file: str,
-        contents: str,
-        discovered_sources: List[Tuple[str, str, str]],
-    ) -> str:
+        source: StoredFile,
+        discovered_sources: List[StoredFile],
+    ) -> bool:
         """Special content parsing to discover included files, as well as minimizing
         the source code."""
         ret = ""
+        is_ok = True
+        local_path = source.local_path
+        contents = source.contents
+        assert contents is not None
+        assert local_path is not None
+
         for line in contents.splitlines():
             # Strip each line, to help minimize it.
             line = FileManager._strip_trailing_comment(line.strip())
@@ -466,62 +609,87 @@ class FileManager:
                 # Matched up an import_code path.
                 include_ref = mtc.group(1)
                 # The included file is relative to the local file's location.
-
-                import_file = self._add_import_file(
-                    local_file=local_file,
-                    include_ref=include_ref,
+                imported_file = self._find_import_file(
+                    referring_path=local_path,
+                    imported_path=include_ref,
                     discovered_sources=discovered_sources,
                 )
-                if import_file.startswith("~/"):
-                    # home_dir is built to not have a trailing '/'.
-                    import_file = REPLACED_WITH_HOME + import_file[1:]
-                line = f'import_code("{import_file}")'
-            ret += "\n" + line
-        return ret
+                if not imported_file or not imported_file.synthetic_game_path:
+                    is_ok = False
+                    # Don't include the line.
+                    continue
 
-    def _add_import_file(
+                imported_game_file = imported_file.synthetic_game_path
+                if imported_game_file.startswith("~/"):
+                    # home_dir is built to not have a trailing '/'.
+                    imported_game_file = REPLACED_WITH_HOME + imported_game_file[1:]
+                    source.is_home_replaced = True
+
+                line = f'import_code("{imported_game_file}")'
+                debug("Replaced import code line with '{line}'", line=line)
+            ret += "\n" + line
+        source.contents = ret
+        return is_ok
+
+    def _find_import_file(
         self,
         *,
-        local_file: str,
-        include_ref: str,
-        discovered_sources: List[Tuple[str, str, str]],
-    ) -> str:
-        """The include file is relative to the local file."""
-        # Try to match the included reference file to a file that's already been
-        # added via a source file or text file.  If the included file isn't
-        # a clean name, then it's put in the discovered sources.
-        base_dir = os.path.abspath(os.path.dirname(local_file))
-        included_local = os.path.join(base_dir, include_ref)
-        for g_f, l_f in self.text_files.items():
-            if os.path.abspath(l_f) == included_local:
-                clean_name = FileManager._clean_source_name(g_f)
-                if clean_name != g_f:
-                    # Need to make a new version of the file.
-                    # This implicitly turns the text file into a source file, though.
-                    # orig_game_file, game_file, local_file
-                    discovered_sources.append((g_f, clean_name, l_f))
-                    return clean_name
-                else:
-                    # Reuse the game file.
-                    # It wasn't added as a source file, so it won't be
-                    # processed as a source file.  This might not be the desired behavior.
-                    # It means clean and dirty game file locations will have different
-                    # behavior, which is a sign of a bad API.
-                    return g_f
+        referring_path: str,
+        imported_path: str,
+        discovered_sources: List[StoredFile],
+    ) -> Optional[StoredFile]:
+        """Looks up the imported file (imported_path), which is relative
+        to the referring_path on the user's local computer.  The method
+        returns the in-game path, possibly with a "~/" prefix.  If the
+        file could not be found, an error is reported and None is returned.
 
-        for g_f, l_f in self.source_files.items():
-            if os.path.abspath(l_f) == included_local:
-                # Reuse the game file.  It is already registered
-                # in the cleaned name registry
-                return self._cleaned_source_map[g_f]
+        If the returned file is new, it is added to the discovered_sources.
+        The file must be assigned a synthetic file, which may be the same
+        as the expected file.
+        """
+        debug(
+            "importing {ref} relative to {local}",
+            local=referring_path,
+            ref=imported_path,
+        )
+        base_dir = os.path.abspath(os.path.dirname(referring_path))
+        included_local = os.path.join(base_dir, imported_path)
+        found: Optional[StoredFile] = None
+        for source in self.stored:
+            if source.is_same_source(included_local):
+                found = source
+                debug("already loaded as {id}", id=source.ref_id)
+                break
 
-        # Implicitly add the file.  Because it's implicitly added, it will be put
-        # into the temp dir by default.
-        g_f = FileManager._clean_source_name(f"{TEMP_DIR}/src/{include_ref}")
-        self._cleaned_source_map[g_f] = g_f
-        # orig_game_file, game_file, local_file
-        discovered_sources.append((g_f, g_f, included_local))
-        return g_f
+        if not found:
+            # Need to create it.
+            found = self._inner_add_local_source_file(None, included_local)
+
+            if not found:
+                return None
+
+            # It was created, so add it to the discovered list.
+            discovered_sources.append(found)
+
+        # Ensure the synthetic filename is set, which may not match the game path.
+        if not found.synthetic_game_path and not found.requested_game_path:
+            # Create one ourself.
+            found.synthetic_game_path = FileManager._clean_source_name(
+                f"{TEMP_DIR}/src/{imported_path}"
+            )
+        elif not found.synthetic_game_path and found.requested_game_path:
+            found.synthetic_game_path = FileManager._clean_source_name(
+                found.requested_game_path
+            )
+        if not found.synthetic_game_path:
+            log_error(
+                "No synthetic game path generated; local: {local}, requested: {req}; id: {id}",
+                local=found.local_path,
+                req=found.requested_game_path,
+                id=found.ref_id,
+            )
+
+        return found
 
     @staticmethod
     def _strip_trailing_comment(line: str) -> str:
@@ -624,12 +792,12 @@ class Blocks:
         self._string_idx = 0
         self._folders: List[Tuple[str, bytes]] = []
         self._files = FileManager()
-        self._build_blocks: List[bytes] = []
-        self._test_blocks: List[bytes] = []
-        self._test_files: Dict[str, str] = {}
+        self._test_files: Dict[str, int] = {}
+        self._build_files: Dict[str, Tuple[int, int, int]] = {}
         self._user_blocks: List[bytes] = []
         self._group_blocks: List[bytes] = []
-        self._other_blocks: List[bytes] = []
+        self._exec_blocks: List[Union[bytes, Tuple[bool, str]]] = []
+        self._setup_problems = False
 
     def assemble(self) -> Optional[bytes]:
         """Assemble the body of the data."""
@@ -643,20 +811,49 @@ class Blocks:
         if file_to_contents is None:
             return None
         for mapped_file in file_to_contents:
-            if mapped_file.requested_path in self._test_files:
-                # It's a test file.
-                self.add_test(
-                    self._test_files[mapped_file.requested_path], mapped_file.contents
+            file_blocks.append(
+                self._add_file(
+                    mapped_file.game_path,
+                    mapped_file.contents,
+                    mapped_file.is_home_replaced,
                 )
+            )
+        # Now compute the execution blocks.  These require extra block
+        # parsing for build and tests.
+        exec_blocks: List[bytes] = []
+        for block in self._exec_blocks:
+            if isinstance(block, bytes):
+                exec_blocks.append(block)
             else:
-                # It's a source file.
-                file_blocks.append(
-                    self._add_file(
-                        mapped_file.path,
-                        mapped_file.contents,
-                        mapped_file.is_home_replaced,
+                # It's a tuple, (true is build else test, item being processed)
+                is_build, name = block
+                if is_build:
+                    ref_id, dirname_idx, fname_idx = self._build_files[name]
+                    game_file = self._files.get_game_file_by_ref(ref_id, True)
+                    if not game_file:
+                        log_error("Failed to find game file for id {id}", id=ref_id)
+                        self._setup_problems = True
+                    else:
+                        exec_blocks.append(
+                            mk_block_build(
+                                self._add_path(game_file), dirname_idx, fname_idx
+                            )
+                        )
+                else:
+                    # A test file.  Use the test content of an import line to the file.
+                    ref_id = self._test_files[name]
+                    game_file = self._files.get_game_file_by_ref(ref_id, True)
+                    if game_file.startswith("~/"):
+                        # home_dir is built to not have a trailing '/'.
+                        game_file = REPLACED_WITH_HOME + game_file[1:]
+                    content = f'import_code("{game_file}")\n'
+                    exec_blocks.append(
+                        mk_block_test(
+                            test_index=len(exec_blocks),
+                            name_index=self._add_string(name),
+                            contents_index=self._add_home_replace_string(content),
+                        )
                     )
-                )
 
         # Now all the blocks are ready to go.
 
@@ -676,11 +873,11 @@ class Blocks:
         for _, block in folders:
             ret += block
 
+        # The overal order of files, users, groups, exec,
+        # is very important.  Within them, it's not important.
+
         # Then the files.  Order doesn't matter here.
         for block in file_blocks:
-            ret += block
-        # Then build the files.  Order doesn't matter here.
-        for block in self._build_blocks:
             ret += block
         # Then users.  Order doesn't matter.
         for block in self._user_blocks:
@@ -689,11 +886,11 @@ class Blocks:
         for block in self._group_blocks:
             ret += block
         # Then the other stuff.  This requires everything else to already exist.
-        for block in self._other_blocks:
+        for block in exec_blocks:
             ret += block
-        # Finally, test it.
-        for block in self._test_blocks:
-            ret += block
+
+        if self._setup_problems:
+            return None
         return ret
 
     def _add_string(self, text: str) -> int:
@@ -769,26 +966,88 @@ class Blocks:
 
     def add_local_text_file(self, game_file: str, local_file: str) -> None:
         """Add a local file as a plain text file."""
-        self._files.add_local_text_file(game_file, local_file)
+        if self._files.add_local_text_file(game_file, local_file) is None:
+            log_error(
+                "Failed to add local text file {local_file}", local_file=local_file
+            )
+            self._setup_problems = True
 
     def add_local_source_file(self, game_file: str, local_file: str) -> None:
         """Add a local file as a source file."""
-        self._files.add_local_source_file(game_file, local_file)
+        if self._files.add_local_source_file(game_file, local_file) is None:
+            log_error(
+                "Failed to add local source file {local_file}", local_file=local_file
+            )
+            self._setup_problems = True
 
     def add_contents_file(self, game_file: str, contents: str) -> None:
         """Add plain text contents as a file."""
-        self._files.add_text_contents(game_file=game_file, contents=contents)
+        if (
+            self._files.add_text_contents(game_file=game_file, contents=contents)
+            is None
+        ):
+            log_error("Failed to add text contents in {game_file}", game_file=game_file)
+            self._setup_problems = True
 
     def add_test_file(self, name: str, local_file: str) -> None:
         """Store the local file as a game file, but it will be
         only used for running a test.  Its contents will be added
         later during file parsing."""
-        game_file = f"{TEMP_DIR}/tests/{name}.src"
-        self.add_local_source_file(game_file, local_file)
-        self._test_files[game_file] = name
+        ref_id = self._files.add_local_source_file(None, local_file)
+        if ref_id is None:
+            log_error(
+                "Failed to add local test file {local_file}", local_file=local_file
+            )
+            self._setup_problems = True
+        else:
+            debug(
+                "Created local test file {ref_id} as {name}", ref_id=ref_id, name=name
+            )
+            self._test_files[name] = ref_id
+            self._exec_blocks.append((False, name))
+
+    def add_build(self, source: str, target: str) -> None:
+        """Create a build block."""
+
+        target_p, target_n = Blocks._split(target)
+        # Ensure the target parent directory exists
+        self.add_folder(target_p)
+        dirname_idx = self._add_path(target_p)
+        fname_idx = self._add_string(target_n)
+
+        # A build block could be building something
+        # that's already on the computer, or generated
+        # by a launch command.  However, if it's been explicitly
+        # added before, then this needs to be a dependency
+        # on that.
+
+        ref_id = self._files.get_game_file_ref(source)
+        if ref_id is None:
+            # Either it was a mistake by the user, or it was
+            # added elsewhere.
+            source_idx = self._add_path(Blocks._normalize(source))
+            self._exec_blocks.append(mk_block_build(source_idx, dirname_idx, fname_idx))
+        else:
+            self._build_files[source] = (ref_id, dirname_idx, fname_idx)
+            self._exec_blocks.append((True, source))
+
+    def add_test(self, name: str, contents: str) -> None:
+        """Create a test block."""
+        # Ensure the test directory exists first.  It's used by the
+        # importer to add the test file there.
+        debug("Adding test [{name}]", name=name)
+        self.add_folder(TEMP_DIR + "/tests")
+        test_idx = len(self._exec_blocks)
+        name_idx = self._add_string(name)
+        # Test files always have a home replacement string strategy.
+        # Note that this means the author must use the home replacement
+        # string, not the nice ~/ syntax.
+        contents_idx = self._add_home_replace_string(contents)
+
+        self._exec_blocks.append(mk_block_test(test_idx, name_idx, contents_idx))
 
     def _add_file(self, file_name: str, contents: str, replace_home: bool) -> bytes:
-        """Create a file block."""
+        """Create a file block.  Called at the final assembly phase."""
         parent, name = Blocks._split(file_name)
         assert name
         # Ensure the parent directory is created.
@@ -819,52 +1078,26 @@ class Blocks:
         """Create a chmod block."""
         file_name_idx = self._add_path(Blocks._normalize(file_name))
         perms_idx = self._add_string(perms)
-        self._other_blocks.append(mk_block_chmod(file_name_idx, perms_idx, recursive))
+        self._exec_blocks.append(mk_block_chmod(file_name_idx, perms_idx, recursive))
 
     def add_chown(self, file_name: str, username: str, recursive: bool) -> None:
         """Create a chown block"""
         file_name_idx = self._add_path(Blocks._normalize(file_name))
         username_idx = self._add_string(username)
-        self._other_blocks.append(
-            mk_block_chown(file_name_idx, username_idx, recursive)
-        )
+        self._exec_blocks.append(mk_block_chown(file_name_idx, username_idx, recursive))
 
     def add_chgroup(self, file_name: str, group: str, recursive: bool) -> None:
         """Create a chgroup block"""
         file_name_idx = self._add_path(Blocks._normalize(file_name))
         group_idx = self._add_string(group)
-        self._other_blocks.append(mk_block_chgroup(file_name_idx, group_idx, recursive))
-
-    def add_build(self, source: str, target: str) -> None:
-        """Create a build block."""
-        # Note: the name MUST be the clensed name.
-        #  That means it must be added first.
-        source = self._files.get_clensed_source_file(source)
-        source_idx = self._add_path(Blocks._normalize(source))
-        target_p, target_n = Blocks._split(target)
-        # Ensure the target parent directory exists
-        self.add_folder(target_p)
-        dirname_idx = self._add_path(target_p)
-        fname_idx = self._add_string(target_n)
-        self._build_blocks.append(mk_block_build(source_idx, dirname_idx, fname_idx))
-
-    def add_test(self, name: str, contents: str) -> None:
-        """Create a test block."""
-        # Ensure the test directory exists first.
-        debug("Adding test [{name}]", name=name)
-        self.add_folder(TEMP_DIR + "/tests")
-        test_idx = len(self._test_blocks)
-        name_idx = self._add_string(name)
-        # Test files always have a home replacement string strategy.
-        contents_idx = self._add_home_replace_string(contents)
-        self._test_blocks.append(mk_block_test(test_idx, name_idx, contents_idx))
+        self._exec_blocks.append(mk_block_chgroup(file_name_idx, group_idx, recursive))
 
     def add_launch(self, args: Sequence[str]) -> None:
         """Create a launch block."""
         # Added to the 'build' set of instructions.
         # Arguments are considered paths, but don't force them to be normalized.
         arg_idx: List[int] = [self._add_path(a) for a in args]
-        self._build_blocks.append(mk_block_launch(arg_idx))
+        self._exec_blocks.append(mk_block_launch(arg_idx))
 
     def add_copy(self, source: str, target: str) -> None:
         """Create a copy file block."""
@@ -875,7 +1108,7 @@ class Blocks:
         self.add_folder(target_p)
         dirname_idx = self._add_path(target_p)
         fname_idx = self._add_string(target_n)
-        self._build_blocks.append(mk_block_copy(source_idx, dirname_idx, fname_idx))
+        self._exec_blocks.append(mk_block_copy(source_idx, dirname_idx, fname_idx))
 
     def add_move(self, source: str, target: str) -> None:
         """Create a move file block."""
@@ -886,13 +1119,13 @@ class Blocks:
         self.add_folder(target_p)
         dirname_idx = self._add_path(target_p)
         fname_idx = self._add_string(target_n)
-        self._build_blocks.append(mk_block_move(source_idx, dirname_idx, fname_idx))
+        self._exec_blocks.append(mk_block_move(source_idx, dirname_idx, fname_idx))
 
     def add_delete(self, path: str) -> None:
         """Create delete a file or folder block."""
         # Added to the 'build' set of instructions.
         path_idx = self._add_path(Blocks._normalize(path))
-        self._build_blocks.append(mk_block_delete(path_idx))
+        self._exec_blocks.append(mk_block_delete(path_idx))
 
     @staticmethod
     def _split(name: str) -> Tuple[str, str]:
@@ -1323,13 +1556,15 @@ def parse_json(data: Any, context_dir: str) -> Optional[bytes]:
 
     return blocks.assemble()
 
+
 # =====================================================================
 # Compression
+
 
 def compress_dictionary_creation(body: bytes) -> Tuple[int, Dict[bytes, int]]:
     """Constructs a reverse lookup dictionary - the lookup string
     to the lookup index.
-    
+
     The algorithm is restricted by the dictionary header to searching for
     at most 16 byte strings.  The dictionary size is limited to 12 bits
     (0-4095).  The very last dictionary entry is reserved as a end-of-stream
@@ -1338,16 +1573,16 @@ def compress_dictionary_creation(body: bytes) -> Tuple[int, Dict[bytes, int]]:
     Returns (max string length, dictionary)
     """
     # First, construct a histogram of the possiblities.
-    histo = Counter()
+    histo: Counter[bytes] = Counter()
     body_len = len(body)
     for count in range(2, 16):
         for pos in range(0, body_len - count + 1):
-            histo[bytes(body[pos:pos+count])] += 1
-    
+            histo[bytes(body[pos : pos + count])] += 1
+
     # Find all the distinct, single values in the stream.
     # These are required to be in the dictionary, but will
     # be
-    single_values = Counter()
+    single_values: Counter[bytes] = Counter()
     for val in body:
         single_values[bytes([val])] += 1
     # we'll use at most the top 12-bits minus the
@@ -1357,18 +1592,20 @@ def compress_dictionary_creation(body: bytes) -> Tuple[int, Dict[bytes, int]]:
     common.sort(key=lambda a: a[1])
     assert len(common) <= 4095
 
-    ret: Dict[bytes, Tuple[bytes, int]] = {}
+    ret: Dict[bytes, int] = {}
     index = 0
     max_len = 0
     for sub, _ in common:
         max_len = max(max_len, len(sub))
         ret[sub] = index
         index += 1
-    
+
     return max_len, ret
 
 
-def compress_encoded_body(body: bytes, max_item_len: int, reverse_lookup: Dict[bytes, int]) -> List[int]:
+def compress_encoded_body(
+    body: bytes, max_item_len: int, reverse_lookup: Dict[bytes, int]
+) -> List[int]:
     """Encode the body into lookup table indexes."""
     pos = 0
     body_len = len(body)
@@ -1388,11 +1625,15 @@ def compress_encoded_body(body: bytes, max_item_len: int, reverse_lookup: Dict[b
         except StopIteration:
             pass
         else:
-            raise RuntimeError(f"Did not stop; incorrect substring table construction (@{pos}/{max_item_len}, c = {body[pos:pos+1]}, {reverse_lookup})")
+            raise RuntimeError(
+                f"Did not stop; incorrect substring table construction (@{pos}/{max_item_len}, c = {body[pos:pos+1]!r}, {reverse_lookup})"
+            )
     return ret
 
 
-def compress_compacted_body_lookup(encoded: List[int], reverse_lookup: Dict[bytes, int]) -> Tuple[List[int], Dict[bytes, int]]:
+def compress_compacted_body_lookup(
+    encoded: List[int], reverse_lookup: Dict[bytes, int]
+) -> Tuple[List[int], Dict[bytes, int]]:
     """A final pass over the body and lookup to compact it down to just the entries used."""
     lookup: Dict[int, bytes] = {}
     for sub, orig_idx in reverse_lookup.items():
@@ -1401,7 +1642,7 @@ def compress_compacted_body_lookup(encoded: List[int], reverse_lookup: Dict[byte
     # Because a fixed length encoding value is used, we don't care about ordering the
     # dictionary in terms of frequency.  However, due to the dictionary storage, it's smaller
     # to store it with same-sized entries grouped together.  So sort entries by size.
-    
+
     histo: Set[int] = set()
     for idx in encoded:
         histo.add(idx)
@@ -1415,7 +1656,7 @@ def compress_compacted_body_lookup(encoded: List[int], reverse_lookup: Dict[byte
         old_to_new[orig_idx] = count
         translated[lookup[orig_idx]] = count
         count += 1
-    
+
     recoded: List[int] = []
     for orig_idx in encoded:
         recoded.append(old_to_new[orig_idx])
@@ -1437,7 +1678,7 @@ def mk_compress_header(reverse_lookup: Dict[bytes, int]) -> bytes:
     # Create a list of shared size, in order of index.
     # Seed the lists with index 0.
     assert 0 in lookup
-    sized_ordered: List[List[int]] = [[lookup[0]]]
+    sized_ordered: List[List[bytes]] = [[lookup[0]]]
     prev_len = len(lookup[0])
     for idx in range(1, len(lookup)):
         val = lookup[idx]
@@ -1450,7 +1691,7 @@ def mk_compress_header(reverse_lookup: Dict[bytes, int]) -> bytes:
             sized_ordered.append([])
         sized_ordered[-1].append(val)
 
-    header = b''
+    header = b""
     debug_idx = 0
     for group in sized_ordered:
         # Add the byte with the (item length - 1 | item count)
@@ -1475,27 +1716,27 @@ def mk_compress_header(reverse_lookup: Dict[bytes, int]) -> bytes:
 
 def mk_encoded_body(encoded: List[int], table_size: int) -> bytes:
     """Convert the body into index lookups in the lookup table."""
-    ret = b''
+    ret = b""
     remainder = 0
     is_odd = False
     for idx in encoded:
         # Do the variable length encoding
         # debug(f"[] = {idx}")
         if is_odd:
-            ret += bytes([remainder | ((idx >> 8) & 0xf)])
-            ret += bytes([idx & 0xff])
+            ret += bytes([remainder | ((idx >> 8) & 0xF)])
+            ret += bytes([idx & 0xFF])
         else:
-            ret += bytes([(idx >> 4) & 0xff])
-            remainder = ((idx << 4) & 0xf0)
+            ret += bytes([(idx >> 4) & 0xFF])
+            remainder = (idx << 4) & 0xF0
         is_odd = not is_odd
     # Add the table size index to mark the end of the data.
     if is_odd:
-        ret += bytes([remainder | ((table_size >> 8) & 0xf)])
-        ret += bytes([table_size & 0xff])
+        ret += bytes([remainder | ((table_size >> 8) & 0xF)])
+        ret += bytes([table_size & 0xFF])
     else:
-        ret += bytes([(table_size >> 4) & 0xff])
+        ret += bytes([(table_size >> 4) & 0xFF])
         # Directly add the value to the buffer, not to the remainder.
-        ret += bytes([(table_size << 4) & 0xf0])
+        ret += bytes([(table_size << 4) & 0xF0])
 
     debug(f"Compressed body size: {len(ret)} bytes")
     return ret
@@ -1503,7 +1744,7 @@ def mk_encoded_body(encoded: List[int], table_size: int) -> bytes:
 
 def compress(body: bytes) -> bytes:
     """Final assembly of the blocks.
-    
+
     This is a custom compression tool based on nybble (4-bit)
     blocks.  It contains a dictionary header split into blocks,
     each block starting with (item length - 1, item count) packed into
@@ -1527,7 +1768,7 @@ def compress(body: bytes) -> bytes:
     ret += mk_encoded_body(encoded, len(reverse_lookup))
 
     return ret
-    
+
 
 def convert(data: bytes, wide: bool) -> str:
     """Convert the data into the encoded form."""

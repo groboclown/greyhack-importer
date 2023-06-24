@@ -132,9 +132,9 @@ When the tool unpacks a test block, each of the files specified is saved to a te
 **Keys:**
 
 * `type`: `compile`
-* `local`: path to a file on your local computer, relative to the bundle file's location, containing the program code to compile.
-* `local-tests`: (optional) path to files on your local computer, relative to the bundle file's location, that run code before compiling the `local` file.
-* `target`: the location of the compiled output file in the game's computer.
+* `local`: (string) path to a file on your local computer, relative to the bundle file's location, containing the program code to compile.
+* `local-tests`: (optional list of strings or string) path to files on your local computer, relative to the bundle file's location, that run code before compiling the `local` file.
+* `target`: (string) the location of the compiled output file in the game's computer.
 
 Bundles the `local` file using the [`source`](#type-source) rules.  The file is saved in a temporary file in the game's computer, then built using the `build` tool, and put into the `target` path in the game's computer.
 

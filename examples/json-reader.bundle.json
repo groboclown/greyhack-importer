@@ -1,0 +1,25 @@
+[
+    {
+        "type": "about",
+        "description": "Parses and prints JSON files."
+    },
+    {
+        "$comment": [
+            "This block does a bunch of nice things.",
+            "It implicitly declares directories in the location of the compiled file.",
+            "It declares the file to build, which will be brought into the grey tar file ",
+            "and put into a temporary location to be built.",
+            "It implicitly imports the imported code into the bundle, and alters the source ",
+            "files to reference its imported location.",
+            "It also runs some files as tests, along with their import and compile rules.",
+            "The 'local' file must be relative to this bundle file."
+        ],
+
+        "type": "compile",
+        "local": "src/json-reader.src",
+        "target": "~/bin/jsonreader",
+        "local-tests": [
+            "src/json.ms"
+        ]
+    }
+]

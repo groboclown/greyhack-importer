@@ -1,5 +1,5 @@
 // Grey Hack script to unpack an exported file and compile it in the game.
-// Version 2.1.0
+// Version 2.1.1
 
 if params.len > 0 and (params[0] == "-h" or params[0] == "--help") then
     exit("Usage: make (packed source file)")
@@ -31,9 +31,30 @@ LaunchProgram = function(cmd, args)
     return get_shell.launch(cmd, args.join(" "))
 end function
 
-
+ENABLE_DEBUG = false
 DEBUG = function(msg)
-    // print("<color=#707070> [DEBUG] " + msg + "</color>")
+    if ENABLE_DEBUG then print("<color=#707070> [DEBUG] " + msg + "</color>")
+end function
+ELIPSIS = char(8230)
+DEBUG_EXTRACT = function(msg, text)
+    if ENABLE_DEBUG then
+        disp = msg + ": <noparse>"
+        count = 0
+        for c in text
+            o = c.code
+            if o >= 32 and o <= 127 then
+                disp = disp + c
+            else
+                disp = disp + "(\U" + o + ")"
+            end if
+            count = count + 1
+            if count > 10 then
+                disp = disp + ELIPSIS
+                break
+            end if
+        end for
+        print("<color=#808080> [DEBUG] " + disp + "</noparse></color>")
+    end if
 end function
 INFO = function(msg)
     print("<color=#a0a0a0>" + msg + "</color>")
@@ -383,7 +404,7 @@ blockAsciiFunc = function(tar, size)
     str_idx = tar.NextUInt16BE
     text = tar.Ascii
     tar.strings[str_idx] = text
-    DEBUG("Unpacked ASCII string " + str_idx + ": " + text[:10])
+    DEBUG_EXTRACT("Unpacked ASCII string " + str_idx, text)
 end function
 
 // UTF-16 encoded string.
@@ -391,7 +412,7 @@ blockUtf16Func = function(tar, size)
     str_idx = tar.NextUInt16BE
     text = tar.Utf16
     tar.strings[str_idx] = text
-    DEBUG("Unpacked UTF16 string " + str_idx + ": " + text[:10])
+    DEBUG_EXTRACT("Unpacked UTF16 string " + str_idx, text)
 end function
 
 // ASCII encoded string + replace with home
@@ -399,7 +420,7 @@ blockAsciiReplaceHomeFunc = function(tar, size)
     str_idx = tar.NextUInt16BE
     text = tar.Ascii().replace(REPLACED_WITH_HOME, home_dir)
     tar.strings[str_idx] = text
-    DEBUG("Unpacked ASCII/HOME string " + str_idx + ": " + text[:10])
+    DEBUG_EXTRACT("Unpacked ASCII/HOME string " + str_idx, text)
 end function
 
 // UTF-16 encoded string + replace with home
@@ -407,7 +428,7 @@ blockUtf16ReplaceHomeFunc = function(tar, size)
     str_idx = tar.NextUInt16BE
     text = tar.Utf16.replace(REPLACED_WITH_HOME, home_dir)
     tar.strings[str_idx] = text
-    DEBUG("Unpacked UTF16/HOME string " + str_idx + ": " + text[:10])
+    DEBUG_EXTRACT("Unpacked UTF16/HOME string " + str_idx, text)
 end function
 
 // Relative-to-home path.
@@ -421,7 +442,7 @@ blockRelHomeFunc = function(tar, size)
         text = home_dir
     end if
     tar.strings[str_idx] = text
-    DEBUG("Unpacked Rel Home string " + str_idx + ": " + text[:10])
+    DEBUG_EXTRACT("Unpacked Rel Home string " + str_idx, text)
 end function
 
 // Folder
@@ -530,6 +551,7 @@ blockBuildFunc = function(tar, size)
     src_out.copy(TEMP_DIR, "source.src")
     res = Compile(TEMP_DIR + "/source.src", TEMP_DIR)
     if res != "" and res != null then exit("Failed building " + source_fqn + ": " + res)
+    DEBUG("- Compiled " + TEMP_DIR + "/source.src to " + TEMP_DIR + "/source with [" + res + "]")
     out = GetFile(TEMP_DIR + "/source")
     if out == null then exit("Did not build " + source_fqn)
     res = out.move(target_path_fqn, target_name)
@@ -684,9 +706,15 @@ BLOCK_HANDLERS = {
 
 // ==========================================================================
 
-if params.len != 1 then exit("Error: requires an argument containing the encoded make file to build.")
+if params.len == 2 and params[0] == "--debug" then
+    ENABLE_DEBUG = true
+    name = params[1]
+else if params.len == 1 then
+    name = params[0]
+else
+    exit("Error: requires an argument containing the encoded make file to build.")
+end if
 
-name = params[0]
 if name[0] != "/" then
     // current_path just points to the program's directory.
     name = home_dir + "/" + name
