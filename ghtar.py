@@ -236,11 +236,11 @@ def mk_block_build(
     )
 
 
-def mk_block_test(test_index: int, name_index: int, contents_index: int) -> bytes:
+def mk_block_test(test_index: int, name_index: int, file_index: int) -> bytes:
     """Create a test block."""
     return mk_chunk(
         BLOCK_TEST,
-        mk_uint16(test_index) + mk_ref(name_index) + mk_ref(contents_index),
+        mk_uint16(test_index) + mk_ref(name_index) + mk_ref(file_index),
     )
 
 
@@ -571,7 +571,34 @@ class FileManager:
                             contents=source.contents,
                             is_home_replaced=source.is_home_replaced,
                         )
-
+            elif source.contents is not None and not source.is_source:
+                # Not cleaning the contents.  It's not a source file.
+                if source.requested_game_path:
+                    assert source.requested_game_path not in ret
+                    ret[source.requested_game_path] = ResolvedFile(
+                        ref_id=source.ref_id,
+                        game_path=source.requested_game_path,
+                        contents=source.contents,
+                        is_home_replaced=source.is_home_replaced,
+                    )
+                    debug(
+                        "put {requested_game_path} for {ref_id}",
+                        requested_game_path=source.requested_game_path,
+                        ref_id=source.ref_id,
+                    )
+                if source.synthetic_game_path:
+                    assert source.synthetic_game_path not in ret
+                    ret[source.synthetic_game_path] = ResolvedFile(
+                        ref_id=source.ref_id,
+                        game_path=source.synthetic_game_path,
+                        contents=source.contents,
+                        is_home_replaced=source.is_home_replaced,
+                    )
+                    debug(
+                        "put {synthetic_game_path} for {ref_id}",
+                        synthetic_game_path=source.synthetic_game_path,
+                        ref_id=source.ref_id,
+                    )
             else:
                 debug(
                     "Skipping file; is source? {iss}, contents: {ct}",
@@ -847,15 +874,11 @@ class Blocks:
                         log_error("Failed to find a game file for id {id}", id=ref_id)
                         self._setup_problems = True
                         continue
-                    if game_file.startswith("~/"):
-                        # home_dir is built to not have a trailing '/'.
-                        game_file = REPLACED_WITH_HOME + game_file[1:]
-                    content = f'import_code("{game_file}")\n'
                     exec_blocks.append(
                         mk_block_test(
                             test_index=len(exec_blocks),
                             name_index=self._add_string(name),
-                            contents_index=self._add_home_replace_string(content),
+                            file_index=self._add_path(game_file),
                         )
                     )
 

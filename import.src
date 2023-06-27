@@ -1,5 +1,5 @@
 // Grey Hack script to unpack an exported file and compile it in the game.
-// Version 2.1.1
+// Version 2.2.0
 
 if params.len > 0 and (params[0] == "-h" or params[0] == "--help") then
     exit("Usage: make (packed source file)")
@@ -533,6 +533,14 @@ blockAssignGroupFunc = function(tar, size)
     INFO("- created group [" + group + "] for [" + username + "]")
 end function
 
+// Remove a user from the system
+blockRemoveUserFunc = function(tar, size)
+end function
+
+// Remove a group from the system
+blockRemoveGroupFunc = function(tar, size)
+end function
+
 // build
 // Build process: compile into the temporary directory, then
 // move into the expected location.  The expected location directory must
@@ -565,11 +573,14 @@ end function
 blockTestFunc = function(tar, size)
     test_index = tar.NextUInt16BE
     name = tar.String
-    contents = tar.String
+    location = tar.String
 
     test_name = test_index + ".src"
     test_fqn = globals.test_dir + "/" + test_name
     test_exec = globals.test_dir + "/" + test_index
+    inf = GetFile(location)
+    if inf == null then exit("No such test file " + location)
+    contents = inf.get_content
     out = GetFile(test_fqn)
     if out == null then
         res = TouchFile(globals.test_dir, test_name)
@@ -684,6 +695,12 @@ BLOCK_HANDLERS = {
 
     // BLOCK_NEW_GROUP = 41
     41: @blockAssignGroupFunc,
+
+    // BLOCK_RM_USER = 42
+    42: @blockRemoveUserFunc,
+
+    // BLOCK_RM_GROUP = 43
+    43: @blockRemoveGroupFunc,
 
     // BLOCK_BUILD = 80
     80: @blockBuildFunc,
