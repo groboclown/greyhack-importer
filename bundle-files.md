@@ -119,10 +119,7 @@ This command does not add files to the bundle; it just runs an instruction on fi
 **Keys:**
 
 * `type`: `test`
-* `contents`: text that will run in the test.
 * `local`: path to a file on your local computer, relative to the bundle file's location, containing text that will be added to the game's file.  This can be either one file (a string) or a list of files (array of strings).  The files can also include glob patterns (like `*.src`).
-
-Exactly one of the `contents` or the `local` keys must be given.
 
 When the tool unpacks a test block, each of the files specified is saved to a temporary file are created in the game computer, compiled with the `build` command, and run.  The file is added under the same rules as the `source` included files, so `import_code()` will include those files in the bundle, and the references will be updated to point to their location.
 
@@ -159,6 +156,32 @@ Add the given user to the game's computer, and assign it the given password.  Th
 * `user`: user name to add to the group
 
 Adds the group to the given user in the game's computer.  This will only succeed if the user running the import operation has permissions to create a group or add a group to a user.
+
+
+## type: `rm-user`
+
+*Since v3.0.0*
+
+**Keys:**
+
+* `type`: `rm-user`
+* `user`: name of the user to create
+* `rm-home` (optional) `true` if the home directory should also be removed; defaults to `false`.
+
+Remove the given user to the game's computer, and optionally removes the user home directory.  This will only succeed if the user running the import operation has permissions to add a user.
+
+
+## type: `rm-group`
+
+*Since v3.0.0*
+
+**Keys:**
+
+* `type`: `rm-group`
+* `group`: name of the group to add to the user; it will be created if it doesn't exist.
+* `user`: user name to add to the group
+
+Removes the group from the given user in the game's computer.  This will only succeed if the user running the import operation has permissions to remove a group from a user.
 
 
 ## type: `chmod`
@@ -257,3 +280,13 @@ Moves a file or folder from one location to anther location.
 * `path`: the file or empty folder location on the game's computer to delete.
 
 Deletes the file or folder from the game's computer.  If deleting a folder, then the folder must be empty.
+
+
+## type: `bundle`
+
+**Keys:**
+
+* `type`: `bundle`
+* `local`: path to the local bundle file.
+
+Adds the contents of another bundle file into this assembled bundle.  If one bundle references another, it also will be included.  Duplicates will be ignored.

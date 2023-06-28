@@ -118,6 +118,14 @@ The encoded body contains a series of 12-bit lookup values (big endian), with lo
 
 The `ghtar.py` file is transformed via Black for a consistent style.  It is also run through MyPy to check for type errors.
 
+
+# Version History
+
+* 3.0.0 - Backwards incompatible change for the handling of 'test' blocks, added to fix a bug with shared files during testing.
+* 2.1.0 - Bug fix with loading files.
+* 2.0.0 - Supported compressed files.
+* 1.0.0 - Initial development.
+
 # License
 
 Released under the [MIT License](LICENSE).

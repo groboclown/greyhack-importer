@@ -119,6 +119,8 @@ BLOCK_CHOWN = 25
 BLOCK_CHGROUP = 26
 BLOCK_NEW_USER = 40
 BLOCK_NEW_GROUP = 41
+BLOCK_RM_USER = 42
+BLOCK_RM_GROUP = 43
 BLOCK_BUILD = 80
 BLOCK_TEST = 81
 BLOCK_LAUNCH = 82
@@ -216,6 +218,16 @@ def mk_block_user(username_index: int, password_index: int) -> bytes:
 def mk_block_group(username_index: int, group_index: int) -> bytes:
     """Assign a user to a group, block."""
     return mk_chunk(BLOCK_NEW_GROUP, mk_ref(username_index) + mk_ref(group_index))
+
+
+def mk_block_rm_user(username_index: int, rm_home: bool) -> bytes:
+    """Remove a new user block."""
+    return mk_chunk(BLOCK_RM_USER, mk_ref(username_index) + mk_uint8(1 if rm_home else 0))
+
+
+def mk_block_rm_group(username_index: int, group_index: int) -> bytes:
+    """Remove a user from a group, block."""
+    return mk_chunk(BLOCK_RM_GROUP, mk_ref(username_index) + mk_ref(group_index))
 
 
 def mk_block_build(
@@ -561,7 +573,7 @@ class FileManager:
                         while subname in ret:
                             idx += 1
                             subname = f"{TEMP_DIR}/src/{idx}/{basename}"
-                        source.synthetic_game_path = FileManager._clean_source_name(
+                        source.synthetic_game_path = self._clean_source_name(
                             subname
                         )
                         assert source.synthetic_game_path not in ret
@@ -701,11 +713,11 @@ class FileManager:
         # Ensure the synthetic filename is set, which may not match the game path.
         if not found.synthetic_game_path and not found.requested_game_path:
             # Create one ourself.
-            found.synthetic_game_path = FileManager._clean_source_name(
+            found.synthetic_game_path = self._clean_source_name(
                 f"{TEMP_DIR}/src/{imported_path}"
             )
         elif not found.synthetic_game_path and found.requested_game_path:
-            found.synthetic_game_path = FileManager._clean_source_name(
+            found.synthetic_game_path = self._clean_source_name(
                 found.requested_game_path
             )
         if not found.synthetic_game_path:
@@ -750,8 +762,7 @@ class FileManager:
         # The "//" was inside a string.
         return line
 
-    @staticmethod
-    def _clean_source_name(game_file: str) -> str:
+    def _clean_source_name(self, game_file: str) -> str:
         """Clean the file name that is used as a source file.  If the name
         is unclean, it will be put into the TEMP_DIR using a unique file mapping."""
         if not game_file:
@@ -786,7 +797,13 @@ class FileManager:
                 cleaned = "X"
             if cleaned[0] != "/":
                 cleaned = "/" + cleaned
-            return f"{TEMP_DIR}/src/dirty{removed}{cleaned}"
+            name = f"{TEMP_DIR}/src/dirty{removed}{cleaned}"
+            idx = 0
+            for existing in self.stored:
+                if existing is not None and existing.synthetic_game_path == name:
+                    idx = idx + 1
+                    name = f"{TEMP_DIR}/src/dirty{removed}{idx}{cleaned}"
+            return name
         return game_file
 
     @staticmethod
@@ -825,6 +842,7 @@ class Blocks:
         self._group_blocks: List[bytes] = []
         self._exec_blocks: List[Union[bytes, Tuple[bool, str]]] = []
         self._setup_problems = False
+        self.bundle_files: List[str] = []
 
     def assemble(self) -> Optional[bytes]:
         """Assemble the body of the data."""
@@ -1058,21 +1076,6 @@ class Blocks:
             self._build_files[source] = (ref_id, dirname_idx, fname_idx)
             self._exec_blocks.append((True, source))
 
-    def add_test(self, name: str, contents: str) -> None:
-        """Create a test block."""
-        # Ensure the test directory exists first.  It's used by the
-        # importer to add the test file there.
-        debug("Adding test [{name}]", name=name)
-        self.add_folder(TEMP_DIR + "/tests")
-        test_idx = len(self._exec_blocks)
-        name_idx = self._add_string(name)
-        # Test files always have a home replacement string strategy.
-        # Note that this means the author must use the home replacement
-        # string, not the nice ~/ syntax.
-        contents_idx = self._add_home_replace_string(contents)
-
-        self._exec_blocks.append(mk_block_test(test_idx, name_idx, contents_idx))
-
     def _add_file(self, file_name: str, contents: str, replace_home: bool) -> bytes:
         """Create a file block.  Called at the final assembly phase."""
         parent, name = Blocks._split(file_name)
@@ -1100,6 +1103,17 @@ class Blocks:
         username_idx = self._add_string(username)
         group_idx = self._add_string(group)
         self._group_blocks.append(mk_block_group(username_idx, group_idx))
+
+    def add_rm_user(self, username: str, rm_home: bool) -> None:
+        """Create a new user block."""
+        username_idx = self._add_string(username)
+        self._exec_blocks.append(mk_block_rm_user(username_idx, rm_home))
+
+    def add_rm_group(self, username: str, group: str) -> None:
+        """Remove a user from a group."""
+        username_idx = self._add_string(username)
+        group_idx = self._add_string(group)
+        self._exec_blocks.append(mk_block_rm_group(username_idx, group_idx))
 
     def add_chmod(self, file_name: str, perms: str, recursive: bool) -> None:
         """Create a chmod block."""
@@ -1227,19 +1241,12 @@ def parse_source_block(
 def parse_test_block(blocks: Blocks, data: Mapping[str, Any], context_dir: str) -> bool:
     """Parse compiling and running a test block."""
     name = data.get("name")
-    contents = data.get("contents")
     local_file = data.get("local")
-    if (name is None or not isinstance(name, str)) or (
-        (contents is None or not isinstance(contents, str))
-        and (local_file is None or not isinstance(local_file, (str, list, tuple)))
+    if (name is None or not isinstance(name, str) or 
+        local_file is None or not isinstance(local_file, (str, list, tuple))
     ):
-        log_error("'test' block requires 'name' and one of 'contents' or 'local'.")
+        log_error("'test' block requires 'name' and 'local'.")
         return False
-
-    if contents:
-        # No parsing of the contents.
-        blocks.add_test(name, contents)
-        return True
 
     # The local file must be parsed as a source file.
     if isinstance(local_file, str):
@@ -1352,6 +1359,20 @@ def parse_group_block(
         return False
 
     blocks.add_group(user, group)
+    return True
+
+
+def parse_rm_user_block(
+        blocks: Blocks, data: Mapping[str, Any], _context_dir: str
+) -> bool:
+    """Parse a remove user block."""
+    return True
+
+
+def parse_rm_group_block(
+        blocks: Blocks, data: Mapping[str, Any], _context_dir: str
+) -> bool:
+    """Parse a remove group block."""
     return True
 
 
@@ -1521,6 +1542,19 @@ def parse_about_block(
     return True
 
 
+def parse_bundle_block(
+    blocks: Blocks, data: Mapping[str, Any], context_dir: str
+) -> bool:
+    """Parse another bundle, relative to this one."""
+    local_file = data.get("local")
+    if local_file is None or not isinstance(local_file, str):
+        log_error("'bundle' block requires 'local'.")
+        return False
+
+    # Recursion.
+    return process_bundle_file(blocks, os.path.join(context_dir, local_file))
+
+
 BLOCK_TYPE_COMMANDS: Mapping[str, Callable[[Blocks, Mapping[str, Any], str], bool]] = {
     "folder": parse_folder_block,
     "file": parse_file_block,
@@ -1530,6 +1564,8 @@ BLOCK_TYPE_COMMANDS: Mapping[str, Callable[[Blocks, Mapping[str, Any], str], boo
     "compile": parse_compile_block,
     "user": parse_user_block,
     "group": parse_group_block,
+    "rm-user": parse_rm_user_block,
+    "rm-group": parse_rm_group_block,
     "chmod": parse_chmod_block,
     "chown": parse_chown_block,
     "chgroup": parse_chgroup_block,
@@ -1545,6 +1581,7 @@ BLOCK_TYPE_COMMANDS: Mapping[str, Callable[[Blocks, Mapping[str, Any], str], boo
     "del": parse_delete_block,
     "rm": parse_delete_block,
     "about": parse_about_block,
+    "bundle": parse_bundle_block,
 }
 
 
@@ -1566,22 +1603,6 @@ def parse_block_cmd(
         return False
 
     return parser(blocks, value, context_dir)
-
-
-def parse_json(data: Any, context_dir: str) -> Optional[bytes]:
-    """Parse the json data into the block store."""
-    if not isinstance(data, (list, tuple)):
-        log_error("Bundle data must be an array of blocks.")
-        return None
-    blocks = Blocks()
-
-    # Must always exist
-    blocks.add_folder(TEMP_DIR)
-
-    for block in data:
-        parse_block_cmd(blocks, block, context_dir)
-
-    return blocks.assemble()
 
 
 # =====================================================================
@@ -1808,6 +1829,52 @@ def convert(data: bytes, wide: bool) -> str:
         res = res[70:]
     return ret
 
+# ==================================================================
+
+
+def mk_initial_blocks() -> Blocks:
+    """Create the initial blocks."""
+    blocks = Blocks()
+
+    # Must always exist
+    blocks.add_folder(TEMP_DIR)
+    return blocks
+
+
+def parse_json(blocks: Blocks, data: Any, context_dir: str) -> None:
+    """Parse the json data into the block store."""
+    if not isinstance(data, (list, tuple)):
+        log_error("Bundle data must be an array of blocks.")
+        return None
+
+    for block in data:
+        parse_block_cmd(blocks, block, context_dir)
+
+
+def process_bundle_file(blocks: Blocks, filename: str) -> bool:
+    """Read a bundle file and load it into the blocks.
+    Return False on error, True on okay
+    """
+    fqn = os.path.abspath(filename)
+    if fqn in blocks.bundle_files:
+        debug("Already processed {fqn}", fqn=fqn)
+        return True
+    
+    blocks.bundle_files.append(fqn)
+    try:
+        with open(filename, "r", encoding="utf-8") as fis:
+            data = json.load(fis)
+    except (OSError, json.JSONDecodeError, TypeError, ValueError) as err:
+        log_error(
+            "Failed to read source ({source}): {err}",
+            source=filename,
+            err=str(err),
+        )
+        return False
+
+    parse_json(blocks, data, os.path.dirname(filename))
+    return True
+
 
 def main(args: Sequence[str]) -> int:
     """CLI Entrypoint."""
@@ -1889,28 +1956,26 @@ def main(args: Sequence[str]) -> int:
                 outfile=outfile,
             )
             return 1
-
-    try:
-        with open(source, "r", encoding="utf-8") as fis:
-            data = json.load(fis)
-    except (OSError, json.JSONDecodeError, TypeError, ValueError) as err:
-        log_error(
-            "Failed to read source ({source}): {err}",
-            source=source,
-            err=str(err),
-        )
+    
+    blocks = mk_initial_blocks()
+    if not process_bundle_file(blocks, source):
+        # Error already reported
+        return 1
+    block_data = blocks.assemble()
+    if block_data is None:
+        # Error already reported
         return 1
 
-    blocks = parse_json(data, os.path.dirname(source))
-    if blocks is None:
-        # already reported the error
-        return 1
     if parsed.compress:
-        debug(f"Source size: {len(blocks)}")
-        # debug(f" = {blocks}")
-        blocks = compress(blocks)
-        debug(f"Compressed size: {len(blocks)}")
-    out = convert(blocks, not parsed.multiline)
+        pre_size = len(block_data)
+        block_data = compress(block_data)
+        post_size = len(block_data)
+        debug(f"Compressed {pre_size} down to {post_size}")
+        if outfile is not None:
+            sys.stderr.write(f"{outfile}: {pre_size} bytes, compressed to {post_size} ({100 * post_size / pre_size:.1f}%)\n")
+    elif outfile is not None:
+        sys.stderr.write(f"{outfile}: {pre_size} bytes\n")
+    out = convert(block_data, not parsed.multiline)
     if outfile is None:
         print(out)
     else:
