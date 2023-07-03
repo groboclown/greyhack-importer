@@ -48,6 +48,7 @@ This example could have used the format `~/bin/trials` as a short-hand to indica
 * `path`: the destination of the file in the game's computer
 * `contents`: the text in this key will be the contents of the file, if given.
 * `local`: path to a file on your local computer, relative to the bundle file's location, containing text that will be added to the game's file.
+* `encoding`: store the file in the game's computer with this encoding.  Useful if a binary file is uploaded.  Supported encoding values are `base64` for Base 64 encoding (also called Mime), and `ascii85` for Ascii85 encoding.
 
 You must provide exactly one of the `contents` key or the `local` keys.
 

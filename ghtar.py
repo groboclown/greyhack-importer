@@ -1206,7 +1206,9 @@ def parse_file_block(blocks: Blocks, data: Mapping[str, Any], context_dir: str) 
     """Parse a simple 'file' block."""
     name = data.get("path")
     contents = data.get("contents")
+    encoding = data.get("encoding")
     local_file = data.get("local")
+
     if (name is None or not isinstance(name, str)) or (
         (contents is None or not isinstance(contents, str))
         and (local_file is None or not isinstance(local_file, str))
@@ -1216,6 +1218,29 @@ def parse_file_block(blocks: Blocks, data: Mapping[str, Any], context_dir: str) 
 
     if contents:
         blocks.add_contents_file(name, contents)
+    elif encoding:
+        # Encoded files are stored like "add_contents_file", to perform the encoding
+        # right now, to not drag that encoding value around, and because they'll never
+        # be source compressed.
+        fqn = os.path.join(context_dir, local_file)
+        try:
+            with open(fqn, "rb") as fis:
+                data = fis.read()
+                if encoding == "ascii85":
+                    contents = base64.a85encode(data).decode("ascii")
+                elif encoding == "base64":
+                    contents = base64.b64encode(data).decode("ascii")
+                else:
+                    log_error(
+                        "Unsupported encoding value '{enc}'; only "
+                        "'ascii85' and 'base64' are supported.",
+                        enc=encoding,
+                    )
+                    return False
+            blocks.add_contents_file(name, contents)
+        except OSError as err:
+            log_error("Could not find local file '{local_file}'", local_file=local_file)
+            return False
     else:
         assert local_file is not None  # nosec  # for mypy
         blocks.add_local_text_file(name, os.path.join(context_dir, local_file))
@@ -1966,8 +1991,8 @@ def main(args: Sequence[str]) -> int:
         # Error already reported
         return 1
 
+    pre_size = len(block_data)
     if parsed.compress:
-        pre_size = len(block_data)
         block_data = compress(block_data)
         post_size = len(block_data)
         debug(f"Compressed {pre_size} down to {post_size}")
