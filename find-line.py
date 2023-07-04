@@ -1,5 +1,15 @@
 #!/usr/bin/python
 
+"""Given a main program and a line number, it will use that
+line number as an absolute line, and scan through the import_code statements
+to find the corresponding real file number.
+
+This is useful if you're trying to build a file in Grey Hack that has
+many imports, but the file fails to build due to a syntax problem.
+The game will only report that the main program failed, and will
+treat the import_code statements like the file is expanded in-place.
+"""
+
 from typing import Tuple, List, Optional
 import os
 import sys
@@ -8,10 +18,13 @@ import re
 CONTEXT_LINES = 5
 IMPORT_RE = re.compile(r'^\s*import_code\s*\(\s*"([^"]+)"\s*\)\s*$')
 
-def read_file(filename: str, current_line: List[int]) -> List[Tuple[str, int, int, str]]:
+
+def read_file(
+    filename: str, current_line: List[int]
+) -> List[Tuple[str, int, int, str]]:
     """Read the file."""
     parent = os.path.dirname(filename)
-    ret: List[Tuple[str, int, str]] = []
+    ret: List[Tuple[str, int, int, str]] = []
     orig_lineno = 1
     with open(filename, "r", encoding="utf-8") as fis:
         for line in fis.readlines():
@@ -27,8 +40,7 @@ def read_file(filename: str, current_line: List[int]) -> List[Tuple[str, int, in
 
 
 def find_lineno(filename: str, lineno: Optional[int]) -> None:
-    """Find the line number in the main file, following imports.
-    """
+    """Find the line number in the main file, following imports."""
     all_lines = read_file(filename, [1])
     min_line = 0 if lineno is None else lineno - CONTEXT_LINES
     max_line = 0 if lineno is None else lineno + CONTEXT_LINES

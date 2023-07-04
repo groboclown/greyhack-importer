@@ -89,8 +89,14 @@ From there, you run the tool by opening a terminal and run it with the grey tar 
 $ import Downloads/my-cool-stuff.txt
 ```
 
-The argument is either an absolute file (`/home/myself/the-file.txt`) or relative to your user's home directory, *not relative to [your working directory](https://greytracker.org/bugzilla/show_bug.cgi
-?id=630).*
+The argument is either an absolute file (`/home/myself/the-file.txt`) or relative to your user's home directory, *not relative to [your working directory](https://greytracker.org/bugzilla/show_bug.cgi?id=630).*
+
+
+### `find-line.py`
+
+Sometimes, when you're developing code on your local computer, you'll run into issues where the game reports a syntax problem that prevents compiling.  Unfortunately, it reports the issue based on the compiled program file, and merges all `import_code` statements as though they were put in-line in the main file.  This means you'll see an error message like "in main.src, line 5523", when your main file only has 20 lines in it.
+
+The `find-line.py` will trace through the main program's import statement and report the actual file and line number against the merged line number.  This can greatly help spot where you used `end if` instead of `end where`.
 
 
 ## The Dirty

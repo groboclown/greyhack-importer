@@ -222,7 +222,9 @@ def mk_block_group(username_index: int, group_index: int) -> bytes:
 
 def mk_block_rm_user(username_index: int, rm_home: bool) -> bytes:
     """Remove a new user block."""
-    return mk_chunk(BLOCK_RM_USER, mk_ref(username_index) + mk_uint8(1 if rm_home else 0))
+    return mk_chunk(
+        BLOCK_RM_USER, mk_ref(username_index) + mk_uint8(1 if rm_home else 0)
+    )
 
 
 def mk_block_rm_group(username_index: int, group_index: int) -> bytes:
@@ -530,7 +532,9 @@ class FileManager:
                 source.contents = raw
             if source.contents is not None and source.is_source:
                 if not self._clean_source(source=source, discovered_sources=to_scan):
-                    log_error("Failed to clean source for {source}", source=source.local_path)
+                    log_error(
+                        "Failed to clean source for {source}", source=source.local_path
+                    )
                     is_ok = False
                 else:
                     if source.requested_game_path:
@@ -573,9 +577,7 @@ class FileManager:
                         while subname in ret:
                             idx += 1
                             subname = f"{TEMP_DIR}/src/{idx}/{basename}"
-                        source.synthetic_game_path = self._clean_source_name(
-                            subname
-                        )
+                        source.synthetic_game_path = self._clean_source_name(subname)
                         assert source.synthetic_game_path not in ret
                         ret[source.synthetic_game_path] = ResolvedFile(
                             ref_id=source.ref_id,
@@ -1218,18 +1220,18 @@ def parse_file_block(blocks: Blocks, data: Mapping[str, Any], context_dir: str) 
 
     if contents:
         blocks.add_contents_file(name, contents)
-    elif encoding:
+    elif encoding and local_file:
         # Encoded files are stored like "add_contents_file", to perform the encoding
         # right now, to not drag that encoding value around, and because they'll never
         # be source compressed.
         fqn = os.path.join(context_dir, local_file)
         try:
             with open(fqn, "rb") as fis:
-                data = fis.read()
+                bin_data = fis.read()
                 if encoding == "ascii85":
-                    contents = base64.a85encode(data).decode("ascii")
+                    contents = base64.a85encode(bin_data).decode("ascii")
                 elif encoding == "base64":
-                    contents = base64.b64encode(data).decode("ascii")
+                    contents = base64.b64encode(bin_data).decode("ascii")
                 else:
                     log_error(
                         "Unsupported encoding value '{enc}'; only "
@@ -1267,8 +1269,11 @@ def parse_test_block(blocks: Blocks, data: Mapping[str, Any], context_dir: str) 
     """Parse compiling and running a test block."""
     name = data.get("name")
     local_file = data.get("local")
-    if (name is None or not isinstance(name, str) or 
-        local_file is None or not isinstance(local_file, (str, list, tuple))
+    if (
+        name is None
+        or not isinstance(name, str)
+        or local_file is None
+        or not isinstance(local_file, (str, list, tuple))
     ):
         log_error("'test' block requires 'name' and 'local'.")
         return False
@@ -1388,14 +1393,14 @@ def parse_group_block(
 
 
 def parse_rm_user_block(
-        blocks: Blocks, data: Mapping[str, Any], _context_dir: str
+    blocks: Blocks, data: Mapping[str, Any], _context_dir: str
 ) -> bool:
     """Parse a remove user block."""
     return True
 
 
 def parse_rm_group_block(
-        blocks: Blocks, data: Mapping[str, Any], _context_dir: str
+    blocks: Blocks, data: Mapping[str, Any], _context_dir: str
 ) -> bool:
     """Parse a remove group block."""
     return True
@@ -1854,6 +1859,7 @@ def convert(data: bytes, wide: bool) -> str:
         res = res[70:]
     return ret
 
+
 # ==================================================================
 
 
@@ -1884,7 +1890,7 @@ def process_bundle_file(blocks: Blocks, filename: str) -> bool:
     if fqn in blocks.bundle_files:
         debug("Already processed {fqn}", fqn=fqn)
         return True
-    
+
     blocks.bundle_files.append(fqn)
     try:
         with open(filename, "r", encoding="utf-8") as fis:
@@ -1981,7 +1987,7 @@ def main(args: Sequence[str]) -> int:
                 outfile=outfile,
             )
             return 1
-    
+
     blocks = mk_initial_blocks()
     if not process_bundle_file(blocks, source):
         # Error already reported
@@ -1997,7 +2003,9 @@ def main(args: Sequence[str]) -> int:
         post_size = len(block_data)
         debug(f"Compressed {pre_size} down to {post_size}")
         if outfile is not None:
-            sys.stderr.write(f"{outfile}: {pre_size} bytes, compressed to {post_size} ({100 * post_size / pre_size:.1f}%)\n")
+            sys.stderr.write(
+                f"{outfile}: {pre_size} bytes, compressed to {post_size} ({100 * post_size / pre_size:.1f}%)\n"
+            )
     elif outfile is not None:
         sys.stderr.write(f"{outfile}: {pre_size} bytes\n")
     out = convert(block_data, not parsed.multiline)
