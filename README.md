@@ -89,8 +89,7 @@ From there, you run the tool by opening a terminal and run it with the grey tar 
 $ import Downloads/my-cool-stuff.txt
 ```
 
-The argument is either an absolute file (`/home/myself/the-file.txt`) or relative to your user's home directory, *not relative to [your working directory](https://greytracker.org/bugzilla/show_bug.cgi
-?id=630).*
+The argument is either an absolute file (`/home/myself/the-file.txt`) or relative to your user's home directory, *not relative to [your working directory](https://greytracker.org/bugzilla/show_bug.cgi?id=630).*
 
 
 ## The Dirty
