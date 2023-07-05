@@ -2,6 +2,8 @@
 
 Easily import your code into the [Grey Hack](https://store.steampowered.com/app/605230/Grey_Hack/) game.
 
+![Logo](logo.svg)
+
 *This document uses the phrase "local computer" to refer to the computer you type into, and "game computer" to refer to the simulated computer in the Grey Hack game.*
 
 For those jumping back to this project for reference, you probably want the [bundle JSON reference](bundle-files.md).
