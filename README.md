@@ -129,6 +129,7 @@ The `ghtar.py` file is transformed via Black for a consistent style.  It is also
 
 # Version History
 
+* 3.1.1 - Add better error handling for large file sizes.
 * 3.1.0 - Added file encoding for storing binary files on the game computer.  Fixed a bug with encoding uncompressed files.
 * 3.0.0 - Backwards incompatible change for the handling of 'test' blocks, added to fix a bug with shared files during testing.
 * 2.1.0 - Bug fix with loading files.

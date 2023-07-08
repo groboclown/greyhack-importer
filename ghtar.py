@@ -438,6 +438,9 @@ class FileManager:
         if self.has_game_file(game_file):
             log_error("Duplicate game file listed: {game_file}", game_file=game_file)
             return False
+        if len(contents) > 65535:
+            log_error("File too large for archiving: {game_file} (maximum size: 65535 bytes)", game_file=game_file)
+            return False
         self.stored.append(
             StoredFile(
                 local_path=None,
@@ -458,6 +461,12 @@ class FileManager:
             return -1
         if not os.path.isfile(local_file):
             log_error("Could not find file '{local_file}'", local_file=local_file)
+            return -1
+        if os.path.getsize(local_file) > 65535:
+            log_error(
+                "File too large to store in archive (maximum size is 65535 bytes): '{local_file}'",
+                local_file=local_file,
+            )
             return -1
         ret = StoredFile(
             local_path=local_file,
@@ -1029,10 +1038,7 @@ class Blocks:
 
     def add_contents_file(self, game_file: str, contents: str) -> None:
         """Add plain text contents as a file."""
-        if (
-            self._files.add_text_contents(game_file=game_file, contents=contents)
-            is None
-        ):
+        if not self._files.add_text_contents(game_file=game_file, contents=contents):
             log_error("Failed to add text contents in {game_file}", game_file=game_file)
             self._setup_problems = True
 
