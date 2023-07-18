@@ -1,5 +1,5 @@
 // Grey Hack script to unpack an exported file and compile it in the game.
-// Version 2.2.0
+// Version 3.2.0
 
 if params.len > 0 and (params[0] == "-h" or params[0] == "--help") then
     exit("Usage: make (packed source file)")
@@ -41,6 +41,7 @@ ENABLE_DEBUG = false
 DEBUG = function(msg)
     if ENABLE_DEBUG then print("<color=#707070> [DEBUG] " + msg + "</color>")
 end function
+IGNORE_MKUG_ERROR = false
 ELIPSIS = char(8230)
 DEBUG_EXTRACT = function(msg, text)
     if ENABLE_DEBUG then
@@ -492,7 +493,7 @@ blockChmodFunc = function(tar, size)
     out = GetFile(fqn)
     if out == null then exit("Could not find file " + fqn)
     res = out.chmod(perms, recurse)
-    INFO("- chmod [" + perms + "] [" + out + "]")
+    INFO("- chmod [" + perms + "] [" + out.path + "]")
 end function
 
 // chown user
@@ -504,7 +505,7 @@ blockChownFunc = function(tar, size)
     out = GetFile(fqn)
     if out == null then exit("Could not find file " + fqn)
     out.set_owner(username, recurse)
-    INFO("- chown [" + username + "] [" + out + "]")
+    INFO("- chown [" + username + "] [" + out.path + "]")
 end function
 
 // chown group
@@ -516,7 +517,7 @@ blockChownGroupFunc = function(tar, size)
     out = GetFile(fqn)
     if out == null then exit("Could not find file " + fqn)
     out.set_group(group, recurse)
-    INFO("- chgroup [" + group + "] [" + out + "]")
+    INFO("- chgroup [" + group + "] [" + out.path + "]")
 end function
 
 // New User
@@ -525,8 +526,15 @@ blockNewUserFunc = function(tar, size)
     password = tar.String
 
     res = CreateUser(username, password)
-    if res != 1 then exit(res)
-    INFO("- created user [" + username + "]")
+    if res != 1 then
+        if IGNORE_MKUG_ERROR then
+            print("Ignoring " + res)
+        else
+            exit(res)
+        end if
+    else
+        INFO("- created user [" + username + "]")
+    end if
 end function
 
 // Assign group to user
@@ -536,7 +544,15 @@ blockAssignGroupFunc = function(tar, size)
 
     res = CreateGroup(username, group)
     if res != 1 then exit(res)
-    INFO("- created group [" + group + "] for [" + username + "]")
+    if res != 1 then
+        if IGNORE_MKUG_ERROR then
+            print("Ignoring " + res)
+        else
+            exit(res)
+        end if
+    else
+        INFO("- created group [" + group + "]")
+    end if
 end function
 
 // Remove a user from the system
@@ -743,6 +759,9 @@ BLOCK_HANDLERS = {
 
 if params.len == 2 and params[0] == "--debug" then
     ENABLE_DEBUG = true
+    name = params[1]
+else if params.len == 2 and params[0] == "--ignore-user-error" then
+    IGNORE_MKUG_ERROR = true
     name = params[1]
 else if params.len == 1 then
     name = params[0]

@@ -439,7 +439,10 @@ class FileManager:
             log_error("Duplicate game file listed: {game_file}", game_file=game_file)
             return False
         if len(contents) > 65535:
-            log_error("File too large for archiving: {game_file} (maximum size: 65535 bytes)", game_file=game_file)
+            log_error(
+                "File too large for archiving: {game_file} (maximum size: 65535 bytes)",
+                game_file=game_file,
+            )
             return False
         self.stored.append(
             StoredFile(
@@ -1419,19 +1422,35 @@ def parse_chmod_block(
     filename = data.get("path")
     recursive = data.get("recursive", False)
     permissions = data.get("permissions")
+    user = data.get("user")
+    group = data.get("group")
+    other = data.get("other")
     if (
         filename is None
         or not isinstance(filename, str)
-        or permissions is None
-        or not isinstance(permissions, str)
         or not isinstance(recursive, bool)
     ):
         log_error(
-            "'chmod' block requires 'path' and 'permissions', and optionally 'recursive'"
+            "'chmod' block requires 'path', optionally 'recursive', and at least oen of 'permissions', 'user', 'group', or 'other'."
         )
         return False
 
-    blocks.add_chmod(filename, permissions, recursive)
+    if permissions is not None and isinstance(permissions, str):
+        blocks.add_chmod(filename, permissions, recursive)
+
+    for lvl, val in (("u", user), ("g", group), ("o", other)):
+        if val is None or not isinstance(val, str):
+            continue
+        plus = ""
+        minus = ["r", "w", "x"]
+        for mod in "rwx":
+            if mod in val:
+                minus.remove(mod)
+                plus += mod
+        if minus:
+            blocks.add_chmod(filename, f"{lvl}-{''.join(minus)}", recursive)
+        if plus:
+            blocks.add_chmod(filename, f"{lvl}+{plus}", recursive)
     return True
 
 

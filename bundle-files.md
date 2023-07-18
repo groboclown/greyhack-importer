@@ -192,6 +192,9 @@ Removes the group from the given user in the game's computer.  This will only su
 * `type`: `chmod`
 * `path`: location of the file or folder on the game's computer
 * `permissions`: chmod permission string to use.  For example, `u+wx`.
+* `user`: explicit user permissions to set.  For example `rw` to allow only read and write.  Set to blank to turn off all permissions.
+* `group`: explicit group permissions to set.
+* `other`: explicit other permissions to set.
 * `recursive`: (optional) `true` or `false` to indicate whether, if the path is a folder, to perform the permission change to all files in the path.  This value defaults to `false`.
 
 Changes permissions on the path.  If `recursive` is given and is `true` and the `path` references a folder, then the folder along with the contents of the folder will have the same permissions assigned.
