@@ -205,7 +205,7 @@ def mk_block_chown(file_name_index: int, username_index: int, recursive: bool) -
 def mk_block_chgroup(file_name_index: int, group_index: int, recursive: bool) -> bytes:
     """Create a chgroup block"""
     return mk_chunk(
-        BLOCK_CHOWN,
+        BLOCK_CHGROUP,
         mk_ref(file_name_index) + mk_ref(group_index) + mk_bool(recursive),
     )
 

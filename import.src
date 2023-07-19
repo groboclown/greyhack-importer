@@ -1,42 +1,42 @@
 // Grey Hack script to unpack an exported file and compile it in the game.
 // Version 3.2.0
 
-if params.len > 0 and (params[0] == "-h" or params[0] == "--help") then
-    exit("Usage: make (packed source file)")
+if params.indexOf("-h") != null or params.indexOf("--help") != null then
+    exit("Usage: make [--quiet] [--ignore-user-error] [--remote=config-file] (packed source file)")
 end if
-
 
 // ==========================================================================
 // For easy mock testing
 GetFile = function(name)
-    return get_shell.host_computer.File(name)
+    return SHELL.host_computer.File(name)
 end function
 TouchFile = function(parent, name)
-    return get_shell.host_computer.touch(parent, name)
+    return SHELL.host_computer.touch(parent, name)
 end function
 CreateFolder = function(parent, name)
-    return get_shell.host_computer.create_folder(parent, name)
+    return SHELL.host_computer.create_folder(parent, name)
 end function
 CreateUser = function(username, password)
-    return get_shell.host_computer.create_user(username, password)
+    return SHELL.host_computer.create_user(username, password)
 end function
 CreateGroup = function(username, group)
-    return get_shell.host_computer.create_group(username, group)
+    return SHELL.host_computer.create_group(username, group)
 end function
 RemoveUser = function(username, rmHome)
-    return get_shell.host_computer.delete_user(username, rmHome)
+    return SHELL.host_computer.delete_user(username, rmHome)
 end function
 RemoveGroup = function(username, group)
-    return get_shell.host_computer.delete_group(username, group)
+    return SHELL.host_computer.delete_group(username, group)
 end function
 Compile = function(source_file, outdir)
-    return get_shell.build(source_file, outdir)
+    return SHELL.build(source_file, outdir)
 end function
 LaunchProgram = function(cmd, args)
     if args == null then args = []
-    return get_shell.launch(cmd, args.join(" "))
+    return SHELL.launch(cmd, args.join(" "))
 end function
 
+SHELL = get_shell
 ENABLE_DEBUG = false
 DEBUG = function(msg)
     if ENABLE_DEBUG then print("<color=#707070> [DEBUG] " + msg + "</color>")
@@ -63,8 +63,9 @@ DEBUG_EXTRACT = function(msg, text)
         print("<color=#808080> [DEBUG] " + disp + "</noparse></color>")
     end if
 end function
+ENABLE_INFO = true
 INFO = function(msg)
-    print("<color=#a0a0a0>" + msg + "</color>")
+    if ENABLE_INFO then print("<color=#a0a0a0>" + msg + "</color>")
 end function
 TEMP_DIR = home_dir + "/" + ".tmp"
 
@@ -459,7 +460,9 @@ blockFolderFunc = function(tar, size)
     DEBUG("Creating [" + name + "] in folder [" + parent + "]")
     out = GetFile(parent + "/" + name)
     if out == null then
-        res = CreateFolder(parent, name)
+        pnt = parent
+        if pnt == "" then pnt = "/"
+        res = CreateFolder(pnt, name)
         if res != 1 then exit("Failed to create folder [" + parent + "/" + name + "]")
         INFO("- created folder [" + parent + "/" + name + "]")
     else
@@ -475,7 +478,9 @@ blockFileFunc = function(tar, size)
 
     out = GetFile(base_dir + "/" + name)
     if out == null then
-        res = TouchFile(base_dir, name)
+        bdn = base_dir
+        if bdn == "" then bdn = "/"
+        res = TouchFile(bdn, name)
         if res != 1 then exit(res)
         out = GetFile(base_dir + "/" + name)
         if out == null then exit("Failed to create file " + base_dir + "/" + name)
@@ -757,15 +762,42 @@ BLOCK_HANDLERS = {
 
 // ==========================================================================
 
-if params.len == 2 and params[0] == "--debug" then
-    ENABLE_DEBUG = true
-    name = params[1]
-else if params.len == 2 and params[0] == "--ignore-user-error" then
-    IGNORE_MKUG_ERROR = true
-    name = params[1]
-else if params.len == 1 then
-    name = params[0]
-else
+name = null
+for param in params
+    if param == "--debug" then
+        ENABLE_DEBUG = true
+        ENABLE_INFO = true
+    else if param == "--quiet" then
+        ENABLE_INFO = false
+        ENABLE_DEBUG = false
+    else if param == "--ignore-user-error" then
+        IGNORE_MKUG_ERROR = true
+    else if param[9:] == "--remote=" then
+        // Load configuration file for a remote shell.
+        source_file = GetFile(param[9:])
+        if source_file == null then exit("Could not find remote configuration '" + param[9:] + "'")
+        if source_file.get_content == null then exit("Could not read remote configuration '" + param[9:] + "'")
+        remote_ip = null
+        remote_user = null
+        remote_pass = null
+        remote_serv = "ssh"
+        remtoe_port = 22
+        for line in source_file.get_content.split(char(10))
+            if line[3:] == "ip=" then remote_ip = line[3:]
+            if line[5:] == "user=" then remote_user = line[5:]
+            if line[5:] == "pass=" then remote_pass = line[5:]
+            if line[5:] == "serv=" then remote_serv = line[5:]
+            if line[5:] == "port=" then remote_port = line[5:].as_int
+        end for
+        globals.SHELL = get_shell.connect_service(remote_ip, remote_port, remote_user, remote_pass, remote_serv)
+        if globals.SHELL isa string then exit("Could not connect to server: " + globals.SHELL)
+    else if name == null then
+        name = param
+    else
+        exit("Invalid parameter '" + param + "'; either an unknown argument or too many source files.")
+    end if
+end for
+if name == null then
     exit("Error: requires an argument containing the encoded make file to build.")
 end if
 
@@ -774,8 +806,8 @@ if name[0] != "/" then
     name = home_dir + "/" + name
 end if
 source_file = GetFile(name)
-if source_file == null then exit("Could not find source file " + params[0])
-if source_file.is_folder or source_file.is_binary then exit("Argument is not a text file: " + params[0])
+if source_file == null then exit("Could not find source file " + name)
+if source_file.get_content == null then exit("Argument is not a text file or can't be read: " + name)
 reader = FileLib.A85Reader.New(source_file)
 if reader == null then
     exit("Could not find file " + params[0])
