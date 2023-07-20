@@ -404,7 +404,7 @@ end function
 file_version = 1
 MAX_SUPPORTED_FILE_VERSION = 2
 test_dir = TEMP_DIR + "/tests"
-REPLACED_WITH_HOME = "<[HOME]>"
+REPLACED_WITH_HOME = "<[HO" + "ME]>"  // this prevents the file itself from being replaced.
 
 // ASCII encoded string.
 blockAsciiFunc = function(tar, size)

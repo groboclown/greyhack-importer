@@ -50,7 +50,8 @@ from collections import Counter
 
 FILE_VERSION__UNCOMPRESSED = 1
 FILE_VERSION__COMPRESSED = 2
-TEMP_DIR = "~/.tmp"
+TEMP_DIR_PARTS = ("~", ".tmp")
+TEMP_DIR = "/".join(TEMP_DIR_PARTS)
 VERBOSE = [False]
 MAXIMUM_GREYHACK_FILE_SIZE = 160000
 
@@ -188,9 +189,8 @@ def mk_block_file(
         mk_ref(dirname_index) + mk_ref(filename_index) + mk_ref(contents_index),
     )
 
-def mk_block_largefile_contents(
-    contents_index: int
-) -> bytes:
+
+def mk_block_largefile_contents(contents_index: int) -> bytes:
     """Create a file block."""
     return mk_chunk(
         BLOCK_FILEPART_CONTENTS,
@@ -198,9 +198,7 @@ def mk_block_largefile_contents(
     )
 
 
-def mk_block_largefile_last(
-    dirname_index: int, filename_index: int
-) -> bytes:
+def mk_block_largefile_last(dirname_index: int, filename_index: int) -> bytes:
     """Create a file block."""
     return mk_chunk(
         BLOCK_FILEPART_LAST,
@@ -687,6 +685,8 @@ class FileManager:
                     # home_dir is built to not have a trailing '/'.
                     imported_game_file = REPLACED_WITH_HOME + imported_game_file[1:]
                     source.is_home_replaced = True
+                elif imported_file.startswith(REPLACED_WITH_HOME):
+                    source.is_home_replaced = True
 
                 line = f'import_code("{imported_game_file}")'
                 debug("Replaced import code line with '{line}'", line=line)
@@ -793,12 +793,34 @@ class FileManager:
             return ""
 
         cleaned = ""
-        remaining = game_file
         removed = ""
+        remaining = game_file
+
+        # Handle home directory; it's the one place the ~ character is okay.
         if remaining[0] == "~":
-            # This is the only place the ~ is okay.
-            cleaned = "~" + cleaned[1:]
+            cleaned = "~"
             remaining = remaining[1:]
+
+        # Simplify the name by omitting duplicate "/" characters and
+        # removing ".." and "." references.
+        parts = []
+        for part in remaining.split("/"):
+            if not part:
+                # Empty part, it means either a leading "/", a trailing "/", or a double "//".
+                if not parts:
+                    # Only the leading "/" is allowed.  Otherwise, we ignore it.
+                    parts.append("")
+            elif part == "..":
+                if not parts:
+                    # A leading "..", which implies it shouldn't be allowed.
+                    # Force it into the temporary directory.
+                    removed = "X"
+                else:
+                    parts.pop()
+            elif part != ".":
+                parts.append(part)
+            # else == ".", so ignore it.
+        remaining = "/".join(parts)
 
         for c in remaining:
             if c not in FileManager.GOOD_SRC_FILE_CHARS:
@@ -827,7 +849,14 @@ class FileManager:
                 if existing is not None and existing.synthetic_game_path == name:
                     idx = idx + 1
                     name = f"{TEMP_DIR}/src/dirty{removed}{idx}{cleaned}"
-            return name
+            debug("Converted game file '{gf}' to '{nm}'", gf=game_file, nm=name)
+            game_file = name
+        else:
+            if game_file[0] == "~":
+                remaining = "~" + remaining
+            game_file = remaining
+            debug("Using game file name '{gf}' without moving into .tmp", gf=game_file)
+
         return game_file
 
     @staticmethod
@@ -1136,7 +1165,9 @@ class Blocks:
                     if len(bit1) > 65531:
                         # This can only happen if buff < cap
                         assert len(buff) <= 65531
-                        ret = ret + mk_block_largefile_contents(self._add_home_replace_string(buff))
+                        ret = ret + mk_block_largefile_contents(
+                            self._add_home_replace_string(buff)
+                        )
                         buff = ""
                         bit1 = sub
                     # bit1 len <= 65531, so first time going through the
@@ -1145,7 +1176,9 @@ class Blocks:
                 while buff:
                     part = buff[:65531]
                     buff = buff[65531:]
-                    ret = ret + mk_block_largefile_contents(self._add_home_replace_string(part))
+                    ret = ret + mk_block_largefile_contents(
+                        self._add_home_replace_string(part)
+                    )
             else:
                 while contents:
                     part = contents[:65531]
