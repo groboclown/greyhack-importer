@@ -1,5 +1,5 @@
 // Grey Hack script to unpack an exported file and compile it in the game.
-// Version 3.2.0
+// Version 3.3.0
 
 if params.indexOf("-h") != null or params.indexOf("--help") != null then
     exit("Usage: make [--quiet] [--ignore-user-error] [--remote=config-file] (packed source file)")
@@ -80,11 +80,9 @@ FileLib.BinaryReader = {}
 // The argument can be a file-like object (a map with a 'get_content' member)
 // or the contents as a string.
 // Returns "null" on error.
-FileLib.BinaryReader.New = function(fileOrContents)
-    if fileOrContents == null then return null
-    if not (fileOrContents isa string) then fileOrContents = fileOrContents.get_content
+FileLib.BinaryReader.New = function(contents)
     ret = new FileLib.BinaryReader
-    ret.content = fileOrContents
+    ret.content = contents
 
     // read_pos the next character position in the content list.
     ret.read_pos = 0
@@ -94,7 +92,7 @@ FileLib.BinaryReader.New = function(fileOrContents)
     ret.buffer_bit_size = 8
 
     // buffer the raw numbers transcoded from the content,
-    //   appended to the end as read.  Each
+    //   appended to the end as read.
     ret.buffer = []
 
     // remaining_bits number of bits in the (partial_data) value.
@@ -102,6 +100,7 @@ FileLib.BinaryReader.New = function(fileOrContents)
     // partial_data a value that used to be in the buffer, which had some
     // data pulled off of it.  It has (remaining_bits) number of bits left.
     ret.partial_data = 0
+
     return ret
 end function
 
@@ -283,8 +282,8 @@ FileLib.A85Reader._85 = "u".code
 FileLib.A85Reader._4z = "z".code
 FileLib.A85Reader._4y = "y".code
 
-FileLib.A85Reader.New = function(fileOrContents)
-    ret = FileLib.BinaryReader.New(fileOrContents)
+FileLib.A85Reader.New = function(contents)
+    ret = FileLib.BinaryReader.New(contents)
     if ret == null then return null
 	ret.buffer_bit_size = 8
 	ret.load_buffer = @FileLib.A85Reader.decode_bytes
@@ -470,23 +469,44 @@ blockFolderFunc = function(tar, size)
     end if
 end function
 
-// File
-blockFileFunc = function(tar, size)
-    base_dir = tar.String
-    name = tar.String
-    contents = tar.String
-
+createLocalFile = function(base_dir, name, contents)
     out = GetFile(base_dir + "/" + name)
     if out == null then
         bdn = base_dir
         if bdn == "" then bdn = "/"
         res = TouchFile(bdn, name)
-        if res != 1 then exit(res)
+        if res != 1 then exit("Failed creating file '" + bdn + "/" + name + "'" + char(10) + res)
         out = GetFile(base_dir + "/" + name)
         if out == null then exit("Failed to create file " + base_dir + "/" + name)
     end if
     out.set_content(contents)
+    if out.get_content != contents then exit("Failed to write " + contents.len + " characters to " + out.path)
     INFO("- created file [" + base_dir + "/" + name + "] with " + contents.len + " characters")
+end function
+
+// File
+blockFileFunc = function(tar, size)
+    base_dir = tar.String
+    name = tar.String
+    contents = tar.String
+    createLocalFile(base_dir, name, contents)
+end function
+
+// Large File Support
+largeFileParts = ""
+
+// File Part - contents
+blockFilePartContentsFunc = function(tar, size)
+    globals.largeFileParts = globals.largeFileParts + tar.String
+end function
+
+// File Part - last
+blockFilePartLastFunc = function(tar, size)
+    base_dir = tar.String
+    name = tar.String
+
+    createLocalFile(base_dir, name, globals.largeFileParts)
+    globals.largeFileParts = ""
 end function
 
 // chmod
@@ -535,7 +555,7 @@ blockNewUserFunc = function(tar, size)
         if IGNORE_MKUG_ERROR then
             print("Ignoring " + res)
         else
-            exit(res)
+            exit(res + char(10) + "Use argument '--ignore-user-error' to ignore this error.")
         end if
     else
         INFO("- created user [" + username + "]")
@@ -720,6 +740,12 @@ BLOCK_HANDLERS = {
     // BLOCK_FILE = 21
     21: @blockFileFunc,
 
+    // BLOCK_FILEPART_CONTENTS = 22
+    22: @blockFilePartContentsFunc,
+
+    // BLOCK_FILEPART_LAST = 23
+    23: @blockFilePartLastFunc,
+
     // BLOCK_CHMOD = 24
     24: @blockChmodFunc,
 
@@ -762,7 +788,7 @@ BLOCK_HANDLERS = {
 
 // ==========================================================================
 
-name = null
+names = []
 for param in params
     if param == "--debug" then
         ENABLE_DEBUG = true
@@ -791,28 +817,34 @@ for param in params
         end for
         globals.SHELL = get_shell.connect_service(remote_ip, remote_port, remote_user, remote_pass, remote_serv)
         if globals.SHELL isa string then exit("Could not connect to server: " + globals.SHELL)
-    else if name == null then
-        name = param
+    else if param[0] == "-" then
+        exit("Unknown option '" + param + "'")
     else
-        exit("Invalid parameter '" + param + "'; either an unknown argument or too many source files.")
+        names.push(param)
     end if
 end for
-if name == null then
+if names.len <= 0 then
     exit("Error: requires an argument containing the encoded make file to build.")
 end if
 
-if name[0] != "/" then
-    // current_path just points to the program's directory.
-    name = home_dir + "/" + name
-end if
-source_file = GetFile(name)
-if source_file == null then exit("Could not find source file " + name)
-if source_file.get_content == null then exit("Argument is not a text file or can't be read: " + name)
-reader = FileLib.A85Reader.New(source_file)
+source_contents = ""
+source_paths = []
+for name in names
+    if name[0] != "/" then
+        // current_path just points to the program's directory.
+        name = home_dir + "/" + name
+    end if
+    source_file = GetFile(name)
+    if source_file == null then exit("Could not find source file " + name)
+    if source_file.get_content == null then exit("Argument is not a text file or can't be read: " + name)
+    source_contents = source_contents + source_file.get_content
+    source_paths.push(source_file.path)
+end for
+reader = FileLib.A85Reader.New(source_contents)
 if reader == null then
-    exit("Could not find file " + params[0])
+    exit("Could not handle " + source_paths)
 end if
-INFO("Unpacking " + source_file.path)
+INFO("Unpacking " + source_paths)
 
 handleDataBlocks = function(tar)
     // Get the kind of block

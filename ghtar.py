@@ -52,6 +52,7 @@ FILE_VERSION__UNCOMPRESSED = 1
 FILE_VERSION__COMPRESSED = 2
 TEMP_DIR = "~/.tmp"
 VERBOSE = [False]
+MAXIMUM_GREYHACK_FILE_SIZE = 160000
 
 
 def debug(msg: str, **args: Any) -> None:
@@ -69,13 +70,13 @@ def log_error(msg: str, **args: Any) -> None:
 # Low level data converters
 def mk_uint8(value: int) -> bytes:
     """Turn an int value into a uint8 value in a byte stream."""
-    assert 0 <= value <= 255
+    assert 0 <= value <= 255, f"uint16 value out of ramge ({value})"
     return value.to_bytes(1, "big")
 
 
 def mk_uint16(value: int) -> bytes:
     """Turn an int value into a uint16 value in a byte stream."""
-    assert 0 <= value <= 65535
+    assert 0 <= value <= 65535, f"uint16 value out of ramge ({value})"
     return value.to_bytes(2, "big")
 
 
@@ -114,6 +115,8 @@ BLOCK_ASCII_REPLACED_HOME = 4
 BLOCK_UTF16_REPLACED_HOME = 5
 BLOCK_FOLDER = 20
 BLOCK_FILE = 21
+BLOCK_FILEPART_CONTENTS = 22
+BLOCK_FILEPART_LAST = 23
 BLOCK_CHMOD = 24
 BLOCK_CHOWN = 25
 BLOCK_CHGROUP = 26
@@ -183,6 +186,25 @@ def mk_block_file(
     return mk_chunk(
         BLOCK_FILE,
         mk_ref(dirname_index) + mk_ref(filename_index) + mk_ref(contents_index),
+    )
+
+def mk_block_largefile_contents(
+    contents_index: int
+) -> bytes:
+    """Create a file block."""
+    return mk_chunk(
+        BLOCK_FILEPART_CONTENTS,
+        mk_ref(contents_index),
+    )
+
+
+def mk_block_largefile_last(
+    dirname_index: int, filename_index: int
+) -> bytes:
+    """Create a file block."""
+    return mk_chunk(
+        BLOCK_FILEPART_LAST,
+        mk_ref(dirname_index) + mk_ref(filename_index),
     )
 
 
@@ -438,12 +460,6 @@ class FileManager:
         if self.has_game_file(game_file):
             log_error("Duplicate game file listed: {game_file}", game_file=game_file)
             return False
-        if len(contents) > 65535:
-            log_error(
-                "File too large for archiving: {game_file} (maximum size: 65535 bytes)",
-                game_file=game_file,
-            )
-            return False
         self.stored.append(
             StoredFile(
                 local_path=None,
@@ -464,12 +480,6 @@ class FileManager:
             return -1
         if not os.path.isfile(local_file):
             log_error("Could not find file '{local_file}'", local_file=local_file)
-            return -1
-        if os.path.getsize(local_file) > 65535:
-            log_error(
-                "File too large to store in archive (maximum size is 65535 bytes): '{local_file}'",
-                local_file=local_file,
-            )
             return -1
         ret = StoredFile(
             local_path=local_file,
@@ -953,6 +963,7 @@ class Blocks:
         return ret
 
     def _add_string(self, text: str) -> int:
+        assert len(text) < 0x10000, f"string too big ({len(text)})"
         if text in self._strings:
             ret = self._strings[text]
         else:
@@ -962,6 +973,7 @@ class Blocks:
         return ret
 
     def _add_home_replace_string(self, text: str) -> int:
+        assert len(text) < 0x10000
         if text in self._home_replace_strings:
             ret = self._home_replace_strings[text]
         else:
@@ -1097,10 +1109,55 @@ class Blocks:
 
         dirname_idx = self._add_path(parent)
         fname_idx = self._add_string(name)
-        if replace_home:
-            contents_idx = self._add_home_replace_string(contents)
+
+        # If the contents are too large for a single block, then it needs
+        # to be built into a large file block.  This is done by
+        # ensuring that the blocks are entirely back-to-back.  There's some
+        # magic here where, when a "last" block is encountered, it resets the
+        # importer's running buffer.
+        if len(contents) >= 65531:
+            # The maximum length value is 65535.  However, due to chunks encoding
+            # the chunk size, the maximum value is smaller at 65531.
+            # Split the content into parts.
+            # This needs to be home replacement string sensitive, otherwise the
+            # home replace token will not be replaced right if split over a part.
+            ret = b""
+            if replace_home:
+                between_parts = contents.split(BLOCK_FILEPART_LAST)
+                buff = ""
+                first = True
+                for part in between_parts:
+                    sub = ""
+                    if first:
+                        first = False
+                    else:
+                        sub = BLOCK_FILEPART_LAST
+                    bit1 = buff + sub
+                    if len(bit1) > 65531:
+                        # This can only happen if buff < cap
+                        assert len(buff) <= 65531
+                        ret = ret + mk_block_largefile_contents(self._add_home_replace_string(buff))
+                        buff = ""
+                        bit1 = sub
+                    # bit1 len <= 65531, so first time going through the
+                    # path part will not split over sub.
+                    buff = bit1 + part
+                while buff:
+                    part = buff[:65531]
+                    buff = buff[65531:]
+                    ret = ret + mk_block_largefile_contents(self._add_home_replace_string(part))
+            else:
+                while contents:
+                    part = contents[:65531]
+                    contents = contents[65531:]
+                    ret = ret + mk_block_largefile_contents(self._add_string(part))
+            return ret + mk_block_largefile_last(dirname_idx, fname_idx)
         else:
-            contents_idx = self._add_string(contents)
+            # Use old stuff.
+            if replace_home:
+                contents_idx = self._add_home_replace_string(contents)
+            else:
+                contents_idx = self._add_string(contents)
         return mk_block_file(dirname_idx, fname_idx, contents_idx)
 
     def add_user(self, username: str, password: str) -> None:
@@ -1985,6 +2042,17 @@ def main(args: Sequence[str]) -> int:
         help="Output file to contain the generated file.  Defaults to stdout.",
     )
     parser.add_argument(
+        "-s",
+        "--split",
+        action="store_true",
+        dest="split_file",
+        help=(
+            "Split the output file into Grey Hack limited sized parts.  "
+            "Each part will add '.(index)' to the end of the file name.  "
+            "Ignored if '-o' is not specified."
+        ),
+    )
+    parser.add_argument(
         "-z",
         "--compress",
         action="store_true",
@@ -2037,8 +2105,21 @@ def main(args: Sequence[str]) -> int:
     if outfile is None:
         print(out)
     else:
-        with open(outfile, "w", encoding="utf-8") as fos:
-            fos.write(out)
+        if parsed.split_file:
+            file_idx = 0
+            while out:
+                with open(f"{outfile}.{file_idx}", "w", encoding="utf-8") as fos:
+                    fos.write(out[:MAXIMUM_GREYHACK_FILE_SIZE])
+                file_idx += 1
+                out = out[MAXIMUM_GREYHACK_FILE_SIZE:]
+        else:
+            with open(outfile, "w", encoding="utf-8") as fos:
+                fos.write(out)
+            if len(out) > MAXIMUM_GREYHACK_FILE_SIZE:
+                sys.stderr.write(
+                    f"Warning: output size ({len(out)}) exceeded maximum game text file size ({MAXIMUM_GREYHACK_FILE_SIZE}).\n"
+                    f"Try using the '--split' argument to turn the file into a size usable by the game.\n"
+                )
     return 0
 
 

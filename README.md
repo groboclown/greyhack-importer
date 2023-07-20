@@ -130,6 +130,9 @@ The `ghtar.py` file is transformed via Black for a consistent style.  It is also
 
 # Version History
 
+* 3.4.0
+    * Added large file support.  This includes both including large files inside the bundle, and splitting the bundle file into multiple parts.  The importer now also supports loading multiple files and joining them into a single text.
+    * Added `ghtar` warning if the output file size is larger than what Grey Hack can support.
 * 3.3.0
     * Added remote connection capability to importer.
     * Added quiet mode (removes informational output).
