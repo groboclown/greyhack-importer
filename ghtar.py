@@ -1968,10 +1968,10 @@ def convert(data: bytes, wide: bool) -> str:
     res = base64.a85encode(data).decode("ascii")
     ret = ""
     while res:
-        ret += res[:70]
+        ret += res[:100]
         if not wide:
             ret += "\n"
-        res = res[70:]
+        res = res[100:]
     return ret
 
 
