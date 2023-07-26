@@ -661,12 +661,13 @@ end function
 // Launch a process.
 blockLaunchFunc = function(tar, size)
     arg_count = tar.NextUInt8
-    cmd = tar.String
+    DEBUG("launch command with " + arg_count + " arguments")
     args = []
-    for _ in range(1, arg_count-1)
+    for _ in range(1, arg_count)
         args.push(tar.String)
     end for
-    res = LaunchProgram(cmd, args)
+    INFO("Launching " + args)
+    res = LaunchProgram(args[0], args[1:])
     if res != 1 then exit("Failed running program: " + res)
 end function
 
@@ -710,7 +711,7 @@ blockDeleteFunc = function(tar, size)
     f = GetFile(path_fqn)
     if f == null or f.is_folder then exit("No such file: " + path_fqn)
     res = f.delete
-    if res != 1 then exit("Failed to delete [" + path_fqn + "]")
+    if res != "" then exit("Failed to delete [" + path_fqn + "]: " + res)
 
     INFO("deleted file [" + path_fqn + "]")
 end function
