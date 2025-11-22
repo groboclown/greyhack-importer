@@ -1,0 +1,58 @@
+{
+  "$comments": [
+    "List of 'message_id' to the message description.",
+    "The subject must be a sentence fragment (not initially capitalized), without trailing punctuation."
+  ],
+  "EXAMPLE": {
+    "subject": "example message",
+    "details": "An f-string example message.",
+    "params": {
+      "v1": {
+        "type": "int",
+        "default": 6
+      }
+    }
+  },
+  "BUG-parse-file": {
+    "subject": "internal bug during file parse",
+    "details": "Encountered an internal bug while parsing the file: {ast_type}",
+    "params": {
+      "ast_type": {
+        "type": "str"
+      }
+    }
+  },
+  "BUG-python-structure": {
+    "subject": "internal bug parsing the Python file structure",
+    "details": "The source Python file structure did not meet expectations: {ast_from} contains a {ast_type}",
+    "params": {
+      "ast_from": {
+        "type": "str"
+      },
+      "ast_type": {
+        "type": "str"
+      }
+    }
+  },
+  "INPUT-invalid-python-use": {
+    "subject": "unsupported Python syntax",
+    "details": "The source Python file uses an unsupported Python syntax ({text})",
+    "params": {
+      "text": {
+        "type": "str"
+      }
+    }
+  },
+  "INPUT-invalid-ast-format": {
+    "subject": "AST structure invalid",
+    "details": "The AST at {path} does not conform to the expected structure: {reason}",
+    "params": {
+      "path": {
+        "type": "list[str]"
+      },
+      "reason": {
+        "type": "str"
+      }
+    }
+  }
+}

@@ -1,0 +1,107 @@
+[project]
+name = "greyscript_py"
+description = "Python script to GreyHack script converter."
+version = "1.0.0"
+license = { text = "CC-0" }
+readme = "README.md"
+requires-python = ">=3.12,<4"
+
+[build-system]
+requires = [
+    "hatchling >= 1.26",
+    "tox >= 4.20",
+]
+build-backend = "hatchling.build"
+
+# =====================================================================
+# Tox Setup
+[tool.tox]
+requires = ["tox>=4.20"]
+
+[tool.tox.env_run_base]
+dependency-groups = [
+    "types",
+    "lint",
+    "test",
+]
+
+[tool.tox.env.test]
+description = "run unit tests"
+deps = [
+    "pytest",
+    "coverage"
+]
+commands = [
+    ["coverage", "run", "-m", "pytest"],
+]
+
+[tool.tox.env.types]
+description = "run type checking tools"
+deps = [
+    "mypy",
+]
+commands = [
+    ["mypy"],
+]
+
+[tool.tox.env.lint]
+description = "run lint tools"
+deps = [
+    "ruff",
+]
+commands = [
+    ["ruff"],
+]
+
+
+# =====================================================================
+# PyTest and coverage setup.
+[tool.pytest.ini_options]
+minversion = "8.0"
+testpaths = [
+    "tests",
+    "src",
+]
+
+[tool.coverage.run]
+source = ["src"]
+branch = true
+
+[tool.coverage.report]
+# Regexes for lines to exclude from consideration
+exclude_also = [
+    # Don't complain about missing debug-only code:
+    "def __repr__",
+    "if self\\.debug",
+    # Don't complain if tests don't hit defensive assertion code:
+    "raise AssertionError",
+    "raise NotImplementedError",
+    # Don't complain if non-runnable code isn't run:
+    "if 0:",
+    "if __name__ == .__main__.:",
+    # Don't complain about abstract methods, they aren't run:
+    "@(abc\\.)?abstractmethod",
+]
+
+ignore_errors = true
+
+[tool.coverage.html]
+directory = "cover"
+
+
+# =====================================================================
+# Typing
+[tool.mypy]
+python_version = "3.12"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+
+mypy_path = [
+    "typing",
+    "src",
+    "tests",
+]
+packages = [
+    "greyscript_py",
+]

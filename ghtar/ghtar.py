@@ -1143,7 +1143,7 @@ class Blocks:
         # to be built into a large file block.  This is done by
         # ensuring that the blocks are entirely back-to-back.  There's some
         # magic here where, when a "last" block is encountered, it resets the
-        # importer's running buffer.
+        # ghtar's running buffer.
         if len(contents) >= 65531:
             # The maximum length value is 65535.  However, due to chunks encoding
             # the chunk size, the maximum value is smaller at 65531.
