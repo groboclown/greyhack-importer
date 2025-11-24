@@ -1,0 +1,70 @@
+{
+  "src": {
+    "f": "f",
+    "sl": 0,
+    "sc": 0,
+    "el": 0,
+    "ec": 0
+  },
+  "type": "block",
+  "statement_list": [
+    {
+      "src": {
+        "f": "f",
+        "sl": 0,
+        "sc": 0,
+        "el": 0,
+        "ec": 0
+      },
+      "type": "block",
+      "statement_list": [
+        {
+          "name": "x",
+          "type": "assign",
+          "src": {
+            "f": "f",
+            "sl": 1,
+            "sc": 0,
+            "el": 1,
+            "ec": 9
+          },
+          "value": {
+            "name": "+",
+            "type": "binary",
+            "src": {
+              "f": "f",
+              "sl": 1,
+              "sc": 4,
+              "el": 1,
+              "ec": 9
+            },
+            "value_list": [
+              {
+                "num": 1,
+                "src": {
+                  "f": "f",
+                  "sl": 1,
+                  "sc": 4,
+                  "el": 1,
+                  "ec": 5
+                },
+                "type": "num"
+              },
+              {
+                "num": 2,
+                "src": {
+                  "f": "f",
+                  "sl": 1,
+                  "sc": 8,
+                  "el": 1,
+                  "ec": 9
+                },
+                "type": "num"
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}

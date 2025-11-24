@@ -1,7 +1,5 @@
-"""Debug version of the GreyHack API."""
-
-
 """Type annotation of the GreyHack API."""
+
 import typing
 
 
@@ -73,7 +71,7 @@ def format_columns(text: str) -> None:
 
 def get_ctf(user: str, password: str, event_name: str) -> CTFEvent | str:
     """Gets the created event from create_ctf.
-    
+
     In case of success, it will return a CTFEvent type object, otherwise it will
     return a string with the error.
     """
@@ -110,9 +108,12 @@ def home_dir() -> str:
 
 # Not listed: import_code
 
-def include_lib(lib_path: str, type: typing.Type[ImportedLibType]) -> ImportedLibType | None:
+
+def include_lib(
+    lib_path: str, type: typing.Type[ImportedLibType]
+) -> ImportedLibType | None:
     """Includes an external library to be used in scripting.
-    
+
     If the library has been included correctly, it will return an object
     of corresponding type with the library, null otherwise.
 
@@ -134,7 +135,7 @@ def launch_path() -> str:
 
 def mail_login(user: str, password: str) -> MetaMail | str:
     """Access the email account and returns a MetaMail type object if the login has been correct.
-    
+
     In case of error, it returns a string.
     """
 
@@ -145,7 +146,7 @@ def nslookup(web_address: str) -> str:
 
 def parent_path(path: str) -> str:
     """Returns the path provided without the last element.
-    
+
     It does not take into account if the path exists."""
 
 
@@ -159,24 +160,27 @@ def program_path() -> str:
 
 def reset_ctf_password(new_password: str) -> None:
     """Change the password of the CTF account.
-    
+
     Only the account owner can change the password. Returns true if the process
     completed successfully, in case of error a string with the details is returned.
     """
 
+
 def typeof(obj: typing.Any) -> str:
     """Returns a string with the type of the object passed as a parameter."""
+
 
 def user_bank_number() -> str:
     """Returns a string with the bank account number of the user who is executing this script."""
 
+
 def user_input(
     prompt_msg: str = "", password_mode: bool = False, any_key: bool = False
-) ->  str:
+) -> str:
     """It puts the program on hold to receive the user input, which will be processed as a string.
-    
+
     If the password mode is activated, the input text will be hidden with asterisks.
-    
+
     If the anyKey argument is true, the entered character will be captured without pressing enter.
     """
 
@@ -187,7 +191,7 @@ def user_mail_address() -> str:
 
 def wait(seconds: float = 1.0) -> None:
     """Pauses the script for the indicated time.
-    
+
     If duration is not specified, the default value is 1 second.
     """
 

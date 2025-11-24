@@ -88,7 +88,7 @@ class GSList(NamedTuple):
     """
 
     src: Source
-    items: GSBlock
+    items: list["GSValue"]
 
 
 class GSKeyPair(NamedTuple):
@@ -109,10 +109,18 @@ class GSMap(NamedTuple):
     items: list[GSKeyPair]
 
 
+class GSMemberReference(NamedTuple):
+    """Looks up a member of an object."""
+
+    src: Source
+    value: "GSValue"
+    member: str
+
+
 class GSBinaryOperation(NamedTuple):
     """An operator with a left and right side.
 
-    Includes standard operators as well as "member reference" ('.').
+    Includes standard operators, but not the "member reference" ('.').
     """
 
     src: Source
@@ -136,8 +144,13 @@ class GSFunctionCall(NamedTuple):
     """
 
     src: Source
-    func: "GSValue"
+    func: "GSCallableValue"
     parameters: list["GSValue"]
+
+
+GSCallableValue = GSVariableRef | GSFunctionRef | GSFunctionCall | GSMemberReference
+
+GSVariableValue = GSVariableRef | GSFunctionRef | GSMemberReference
 
 
 # GSValue: anything that evaluates to a single value.
@@ -147,9 +160,9 @@ GSValue = (
     | GSVariableRef
     | GSTypeRef
     | GSFunctionRef
-    | GSVariableRef
     | GSConstant
     | GSFunctionCall
+    | GSMemberReference
     | GSBinaryOperation
     | GSUnaryOperation
 )

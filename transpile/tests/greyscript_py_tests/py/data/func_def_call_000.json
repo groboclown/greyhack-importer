@@ -1,0 +1,277 @@
+{
+  "src": {
+    "f": "f",
+    "sl": 0,
+    "sc": 0,
+    "el": 0,
+    "ec": 0
+  },
+  "type": "block",
+  "statement_list": [
+    {
+      "src": {
+        "f": "f",
+        "sl": 0,
+        "sc": 0,
+        "el": 0,
+        "ec": 0
+      },
+      "type": "block",
+      "statement_list": [
+        {
+          "src": {
+            "f": "f",
+            "sl": 1,
+            "sc": 1,
+            "el": 3,
+            "ec": 16
+          },
+          "type": "assign",
+          "name": "do_run",
+          "value": {
+            "src": {
+              "f": "f",
+              "sl": 1,
+              "sc": 1,
+              "el": 3,
+              "ec": 16
+            },
+            "type": "function",
+            "name_value_list": [
+              {
+                "name": "arg1",
+                "value": null
+              },
+              {
+                "name": "arg2",
+                "value": null
+              }
+            ],
+            "statement_list": [
+              {
+                "src": {
+                  "f": "f",
+                  "sl": 2,
+                  "sc": 5,
+                  "el": 2,
+                  "ec": 30
+                },
+                "type": "runcall",
+                "value": {
+                  "src": {
+                    "f": "f",
+                    "sl": 2,
+                    "sc": 5,
+                    "el": 2,
+                    "ec": 10
+                  },
+                  "type": "var",
+                  "name": "print"
+                },
+                "value_list": [
+                  {
+                    "src": {
+                      "f": "f",
+                      "sl": 2,
+                      "sc": 27,
+                      "el": 2,
+                      "ec": 28
+                    },
+                    "type": "binary",
+                    "name": "+",
+                    "value_list": [
+                      {
+                        "src": {
+                          "f": "f",
+                          "sl": 2,
+                          "sc": 27,
+                          "el": 2,
+                          "ec": 28
+                        },
+                        "type": "str",
+                        "str": "c"
+                      },
+                      {
+                        "src": {
+                          "f": "f",
+                          "sl": 2,
+                          "sc": 21,
+                          "el": 2,
+                          "ec": 27
+                        },
+                        "type": "binary",
+                        "name": "+",
+                        "value_list": [
+                          {
+                            "src": {
+                              "f": "f",
+                              "sl": 2,
+                              "sc": 22,
+                              "el": 2,
+                              "ec": 26
+                            },
+                            "type": "var",
+                            "name": "arg2"
+                          },
+                          {
+                            "src": {
+                              "f": "f",
+                              "sl": 2,
+                              "sc": 20,
+                              "el": 2,
+                              "ec": 21
+                            },
+                            "type": "binary",
+                            "name": "+",
+                            "value_list": [
+                              {
+                                "src": {
+                                  "f": "f",
+                                  "sl": 2,
+                                  "sc": 20,
+                                  "el": 2,
+                                  "ec": 21
+                                },
+                                "type": "str",
+                                "str": "b"
+                              },
+                              {
+                                "src": {
+                                  "f": "f",
+                                  "sl": 2,
+                                  "sc": 14,
+                                  "el": 2,
+                                  "ec": 20
+                                },
+                                "type": "binary",
+                                "name": "+",
+                                "value_list": [
+                                  {
+                                    "src": {
+                                      "f": "f",
+                                      "sl": 2,
+                                      "sc": 15,
+                                      "el": 2,
+                                      "ec": 19
+                                    },
+                                    "type": "var",
+                                    "name": "arg1"
+                                  },
+                                  {
+                                    "src": {
+                                      "f": "f",
+                                      "sl": 2,
+                                      "sc": 13,
+                                      "el": 2,
+                                      "ec": 14
+                                    },
+                                    "type": "binary",
+                                    "name": "+",
+                                    "value_list": [
+                                      {
+                                        "src": {
+                                          "f": "f",
+                                          "sl": 2,
+                                          "sc": 13,
+                                          "el": 2,
+                                          "ec": 14
+                                        },
+                                        "type": "str",
+                                        "str": "a"
+                                      },
+                                      {
+                                        "src": {
+                                          "f": "f",
+                                          "sl": 2,
+                                          "sc": 11,
+                                          "el": 2,
+                                          "ec": 29
+                                        },
+                                        "type": "str",
+                                        "str": ""
+                                      }
+                                    ]
+                                  }
+                                ]
+                              }
+                            ]
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "src": {
+                  "f": "f",
+                  "sl": 3,
+                  "sc": 5,
+                  "el": 3,
+                  "ec": 16
+                },
+                "type": "retval",
+                "value": {
+                  "src": {
+                    "f": "f",
+                    "sl": 3,
+                    "sc": 12,
+                    "el": 3,
+                    "ec": 16
+                  },
+                  "type": "num",
+                  "num": true
+                }
+              }
+            ]
+          }
+        },
+        {
+          "src": {
+            "f": "f",
+            "sl": 6,
+            "sc": 1,
+            "el": 6,
+            "ec": 15
+          },
+          "type": "runcall",
+          "value": {
+            "src": {
+              "f": "f",
+              "sl": 1,
+              "sc": 1,
+              "el": 3,
+              "ec": 16
+            },
+            "type": "funcref",
+            "name": "do_run"
+          },
+          "value_list": [
+            {
+              "src": {
+                "f": "f",
+                "sl": 6,
+                "sc": 8,
+                "el": 6,
+                "ec": 11
+              },
+              "type": "str",
+              "str": "s"
+            },
+            {
+              "src": {
+                "f": "f",
+                "sl": 6,
+                "sc": 13,
+                "el": 6,
+                "ec": 14
+              },
+              "type": "num",
+              "num": 2
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

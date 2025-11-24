@@ -2,8 +2,8 @@
 
 import importlib.resources
 import json
-from typing import NamedTuple, Literal
 from collections.abc import Iterable, Sequence
+from typing import NamedTuple, Literal
 
 from .jdata import DictJsonData, JsonData
 from .source import Source
@@ -28,7 +28,13 @@ class Problems:
     def __init__(self) -> None:
         self._problems: list[ConvertProblem] = []
 
-    def add_err(self, __source: Source, __message_id: str, **kwargs: JsonData) -> None:
+    def add_from(self, problems: "Problems") -> None:
+        """Add all the problems from the collection."""
+        self._problems.extend(problems._problems)
+
+    def add_err(
+        self, __source: Source, __message_id: str, /, **kwargs: JsonData
+    ) -> None:
         """Add an error."""
         self._problems.append(
             ConvertProblem(
@@ -39,7 +45,9 @@ class Problems:
             )
         )
 
-    def add_warn(self, __source: Source, __message_id: str, **kwargs: JsonData) -> None:
+    def add_warn(
+        self, __source: Source, __message_id: str, /, **kwargs: JsonData
+    ) -> None:
         """Add a warning."""
         self._problems.append(
             ConvertProblem(
@@ -60,12 +68,12 @@ class Problems:
                 parameters=kwargs,
             )
         )
-    
+
     @property
     def all(self) -> Sequence[ConvertProblem]:
         """Get all the contained problems."""
         return self._problems
-    
+
     @property
     def errors(self) -> Iterable[ConvertProblem]:
         """Get all the contained errors."""
@@ -89,16 +97,24 @@ class ProblemMessages:
         params = dict(problem.parameters)
         msg = self.data.get(problem.message_id, {})
         if not isinstance(msg, dict):
-            raise RuntimeError(f"message catalog has incorrect format: {problem.message_id}")
+            raise RuntimeError(
+                f"message catalog has incorrect format: {problem.message_id}"
+            )
         sub = msg.get("subject", f"[{problem.message_id}]")
         if not isinstance(sub, str):
-            raise RuntimeError(f"message catalog has incorrect format: {problem.message_id}.subject")
+            raise RuntimeError(
+                f"message catalog has incorrect format: {problem.message_id}.subject"
+            )
         desc = msg.get("details", "[unknown message]")
         if not isinstance(desc, str):
-            raise RuntimeError(f"message catalog has incorrect format: {problem.message_id}.details")
+            raise RuntimeError(
+                f"message catalog has incorrect format: {problem.message_id}.details"
+            )
         msg_params = msg.get("params", {})
         if not isinstance(msg_params, dict):
-            raise RuntimeError(f"message catalog has incorrect format: {problem.message_id}.params")
+            raise RuntimeError(
+                f"message catalog has incorrect format: {problem.message_id}.params"
+            )
         for key, val in msg_params.items():
             if key not in params:
                 if isinstance(val, dict) and "default" in val:

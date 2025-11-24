@@ -5,6 +5,7 @@ from typing import NamedTuple, Literal
 
 from .basic import (
     GSStatement,
+    GSBlock,
     GSBreak,
     GSContinue,
     GSReturn,
@@ -38,7 +39,7 @@ def parse_source(
     filename: str, data: DictJsonData, problems: Problems
 ) -> Sequence[GSStatement]:
     """Turn the data source into a list of GSStatement objects."""
-    return _parse_statements(
+    return _parse_block(
         ParseData.new(
             raw=data,
             data_filename=filename,
@@ -525,7 +526,7 @@ class ParseData(NamedTuple):
 
         This always includes the required 'source' and 'type' keys.
         """
-        keys = list({*keys, "source", "type"})
+        keys = list({*keys, "src", "type"})
         missing, extra = self.node.expect(keys)
         ret = True
         for key in missing:
@@ -553,7 +554,7 @@ class ParseData(NamedTuple):
         )
 
 
-def _parse_statements(p_data: ParseData) -> Sequence[GSStatement]:
+def _parse_block(p_data: ParseData) -> GSBlock:
     """Parse the AST model.
 
     The 'data' must be a list of statement nodes.
@@ -609,7 +610,7 @@ def _parse_statements(p_data: ParseData) -> Sequence[GSStatement]:
                             block=GSConditionStatementsBlock(
                                 src=n_data.node.source,
                                 condition=_parse_value_node(n_data.value),
-                                statements=_parse_statements(n_data),
+                                statements=_parse_block(n_data),
                             ),
                         )
                     )
@@ -622,7 +623,7 @@ def _parse_statements(p_data: ParseData) -> Sequence[GSStatement]:
                             src=n_data.node.source,
                             name=n_data.name,
                             value=_parse_value_node(n_data.value),
-                            statements=_parse_statements(n_data),
+                            statements=_parse_block(n_data),
                         )
                     )
             case "if":
@@ -635,23 +636,26 @@ def _parse_statements(p_data: ParseData) -> Sequence[GSStatement]:
                                 GSConditionStatementsBlock(
                                     src=if_data.node.source,
                                     condition=_parse_value_node(if_data.value),
-                                    statements=_parse_statements(if_data),
+                                    statements=_parse_block(if_data),
                                 )
                             )
                     ret.append(
                         GSIfBlock(
                             src=n_data.node.source,
                             if_blocks=if_else,
-                            else_statements=_parse_statements(n_data),
+                            else_statements=_parse_block(n_data),
                         )
                     )
             case "block":
                 if n_data.expect(NODE_KEY_STATEMENT_LIST):
-                    ret.extend(n_data.statements)
+                    ret.append(_parse_block(n_data))
             case key:
                 n_data.add_err([key], "invalid statement type")
 
-    return ret
+    return GSBlock(
+        src=p_data.data_source,
+        statements=ret,
+    )
 
 
 def _parse_value_node(p_data: ParseData) -> GSValue:
@@ -675,7 +679,7 @@ def _parse_value_node(p_data: ParseData) -> GSValue:
                 return GSFunctionDef(
                     src=p_data.node.source,
                     parameter_pairs=p_data.name_value_list,
-                    statements=_parse_statements(p_data),
+                    statements=_parse_block(p_data),
                 )
         case "var":
             if p_data.expect(NODE_KEY_NAME):
@@ -724,8 +728,8 @@ def _parse_value_node(p_data: ParseData) -> GSValue:
                     return GSBinaryOperation(
                         src=p_data.node.source,
                         operator=p_data.name,
-                        left=values[0],
-                        right=values[1],
+                        left=_parse_value_node(values[0]),
+                        right=_parse_value_node(values[1]),
                     )
         case "unary":
             if p_data.expect(NODE_KEY_NAME, NODE_KEY_VALUE):

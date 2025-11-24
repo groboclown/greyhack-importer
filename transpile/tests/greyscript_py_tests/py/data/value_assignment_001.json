@@ -1,0 +1,94 @@
+{
+  "src": {
+    "f": "f",
+    "sl": 0,
+    "sc": 0,
+    "el": 0,
+    "ec": 0
+  },
+  "type": "block",
+  "statement_list": [
+    {
+      "src": {
+        "f": "f",
+        "sl": 0,
+        "sc": 0,
+        "el": 0,
+        "ec": 0
+      },
+      "type": "block",
+      "statement_list": [
+        {
+          "name": "the_value",
+          "type": "assign",
+          "src": {
+            "f": "f",
+            "sl": 3,
+            "sc": 0,
+            "el": 3,
+            "ec": 31
+          },
+          "value": {
+            "name": "+",
+            "type": "binary",
+            "src": {
+              "f": "f",
+              "sl": 3,
+              "sc": 12,
+              "el": 3,
+              "ec": 31
+            },
+            "value_list": [
+              {
+                "num": 16,
+                "src": {
+                  "f": "f",
+                  "sl": 3,
+                  "sc": 12,
+                  "el": 3,
+                  "ec": 14
+                },
+                "type": "num"
+              },
+              {
+                "name": "/",
+                "type": "binary",
+                "src": {
+                  "f": "f",
+                  "sl": 3,
+                  "sc": 18,
+                  "el": 3,
+                  "ec": 30
+                },
+                "value_list": [
+                  {
+                    "name": "other",
+                    "src": {
+                      "f": "f",
+                      "sl": 3,
+                      "sc": 18,
+                      "el": 3,
+                      "ec": 23
+                    },
+                    "type": "var"
+                  },
+                  {
+                    "name": "mine",
+                    "src": {
+                      "f": "f",
+                      "sl": 3,
+                      "sc": 26,
+                      "el": 3,
+                      "ec": 30
+                    },
+                    "type": "var"
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}

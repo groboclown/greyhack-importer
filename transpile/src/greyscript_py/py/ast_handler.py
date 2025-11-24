@@ -29,7 +29,7 @@ def visit_parsed_file(filename: str, code: ast.AST) -> ScriptFile:
         assert isinstance(code, ast.AST)  # nosec  # for mypy
         base_name = os.path.basename(filename)
         if "." in base_name:
-            base_name = base_name[:base_name.rindex(".")]
+            base_name = base_name[: base_name.rindex(".")]
         vis = ModuleVisitor(
             src=src.from_ast(code),
             problems=problems,
@@ -38,7 +38,9 @@ def visit_parsed_file(filename: str, code: ast.AST) -> ScriptFile:
         for item in code.body:
             print(f"Visiting {item}")
             vis.visit(item)
-        statements.extend(vis.statements)
+        block = vis.finalize()
+        if block:
+            statements.append(block)
         print(f"Added {len(statements)} statements")
     else:
         problems.add_err(src.from_ast(code), "BUG-parse-file", ast_type=str(type(code)))
@@ -62,3 +64,16 @@ def visit_file(filename: str) -> ScriptFile:
                 mode="exec",
             ),
         )
+
+
+def visit_file_text(filename: str, text: str) -> ScriptFile:
+    """Visit the Python file."""
+
+    return visit_parsed_file(
+        filename,
+        ast.parse(
+            source=text,
+            filename=filename,
+            mode="exec",
+        ),
+    )

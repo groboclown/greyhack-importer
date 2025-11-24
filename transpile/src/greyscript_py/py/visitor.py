@@ -1,14 +1,22 @@
 """Handles Python AST nodes converted to GreyHack scripts."""
 
 import ast
-from typing import Literal
+from collections.abc import Sequence
+from typing import Literal, Generic, TypeVar
 
+from . import value_context as vax, builder
+from .built_ins import create_base_context, load_greyhack_module
 from ..ast import basic
 from ..util.problems import Problems
 from ..util.source import Source
 
+T = TypeVar("T", bound=basic.GSElement)
 
-class BaseVisitor(ast.NodeVisitor):
+MODULE_GREYHACK = "greyhack"
+GREYHACK_CONTENTS = load_greyhack_module()
+
+
+class BaseVisitor(ast.NodeVisitor, Generic[T]):
     """Base visitor for modules and functions.
 
     Functions and modules both can contain the same information.
@@ -17,11 +25,15 @@ class BaseVisitor(ast.NodeVisitor):
     def __init__(self, src: Source, problems: Problems) -> None:
         self._src = src
         self._probs = problems
-        self.statements: list[basic.GSStatement] | None = None
+        self._has_problems = True
+
+    def finalize(self) -> T | None:
+        """Finalize the GSElement."""
+        raise NotImplementedError
 
     def generic_visit(self, node: ast.AST) -> None:
         """Visitor for unhandled types."""
-        print(f"{self._src}: unhandled visit({node})")
+        print(f"{self._src}: unhandled visit({node}) from {self}")
         self._probs.add_err(
             self._src.child_ast(node),
             "BUG-python-structure",
@@ -39,16 +51,20 @@ ComparisonOpr = Literal[
 ]
 
 
-class ValueVisitor(BaseVisitor):
+class ValueVisitor(BaseVisitor[basic.GSValue]):
     """Visits a code expression.
 
     ast.Expr contains an expression value.
     """
 
     @staticmethod
-    def handle(parent: BaseVisitor, expr: ast.Expr | ast.expr) -> "ValueVisitor":
+    def handle(
+        parent: BaseVisitor, expr: ast.Expr | ast.expr, context: vax.ValueContext
+    ) -> "ValueVisitor":
         """Handle this expression."""
-        ret = ValueVisitor(parent=parent._src, expr=expr, problems=parent._probs)
+        ret = ValueVisitor(
+            parent=parent._src, expr=expr, problems=parent._probs, context=context
+        )
         if isinstance(expr, ast.Expr) and hasattr(expr, "value"):
             ret.visit(expr.value)
         else:
@@ -56,25 +72,40 @@ class ValueVisitor(BaseVisitor):
         return ret
 
     def __init__(
-        self, parent: Source, expr: ast.Expr | ast.expr, problems: Problems
+        self,
+        parent: Source,
+        expr: ast.Expr | ast.expr,
+        context: vax.ValueContext,
+        problems: Problems,
     ) -> None:
         BaseVisitor.__init__(self, parent.child_ast(expr), problems)
-        self.value: basic.GSValue | None = None
-        self.value_source: Source | None = None
+        self.context = context
+        self.value: builder.PyGsBuilder[basic.GSValue] | None = None
+
+    def finalize(self) -> T | None:
+        """Finalize the GSElement."""
+        if self._has_problems:
+            return None
+        if self.value is None:
+            self._probs.add_err(self._src, "BUG-value-not-set")
+            self._has_problems = True
+            return None
+        return self.value.build(self._probs)
 
     def visit_Attribute(self, node: ast.Attribute) -> None:
-        """Visit an attribute."""
-        print(f"ExpressionVisitor.visit_Attribute({node})")
+        """Visit an attribute of an object."""
+        print(f"ValueVisitor.visit_Attribute({node})")
         self._one(node)
-        self.value = AttributeExpr(
-            value=ValueVisitor.handle(self, node.value),
-            attribute=str(node.attr),
-            ctx=_as_ctx(node.ctx, self._src, node, self._probs),
+        build = builder.TwoArgumentBuilder.new_member_ref(self._src.child_ast(node))
+        build.left = ValueVisitor.handle(self, node.value, self.context).value
+        build.right = builder.StaticBuilder(
+            basic.GSConstantString(src=self._src.child_ast(node), value=str(node.value))
         )
+        self.value = build
 
     def visit_BinOp(self, node: ast.BinOp) -> None:
         """Visit a binary operation."""
-        print(f"ExpressionVisitor.visit_BinOp({node})")
+        print(f"ValueVisitor.visit_BinOp({node})")
         self._one(node)
         opr: Operators
         if isinstance(node.op, ast.Add):
@@ -110,41 +141,54 @@ class ValueVisitor(BaseVisitor):
                 text=ast.unparse(node),
             )
             opr = "(unknown)"
-        left = ValueVisitor.handle(self, node.left)
-        right = ValueVisitor.handle(self, node.right)
-        if left.value is not None and right.value is not None:
-            self.value = basic.GSBinaryOperation(
-                src=self._src.child_ast(node),
-                operator=opr,
-                left=left.value,
-                right=right.value,
-            )
-        # else the problems were correctly populated
+        build = builder.TwoArgumentBuilder.new_binary(self._src.child_ast(node), opr)
+        build.left = ValueVisitor.handle(self, node.left, self.context).value
+        build.right = ValueVisitor.handle(self, node.right, self.context).value
+        self.value = build
 
     def visit_Call(self, node: ast.Call) -> None:
         """Visit a call."""
-        print(f"ExpressionVisitor.visit_Call({node})")
+        print(f"ValueVisitor.visit_Call({node})")
         self._one(node)
-        args: list[(str | None, "ValueVisitor")] = []
-        args.extend([(None, ValueVisitor.handle(self, a)) for a in node.args])
-        args.extend(
-            [
-                # Note: loses key's location context.
-                (
-                    None if k.arg is None else str(k.arg),
-                    ValueVisitor.handle(self, k.value),
+        build = builder.CallBuilder(
+            src=self._src.child_ast(node),
+            context=self.context,
+        )
+        build.func = ValueVisitor.handle(self, node.func, self.context).value
+        for arg in node.args:
+            arg_val = ValueVisitor.handle(self, arg, self.context).value
+            if arg_val:
+                build.position_arguments.append(arg_val)
+            else:
+                build.position_arguments.append(
+                    builder.ErrorBuilder(
+                        self._src,
+                        "BAD_ARG",
+                        argument=repr(arg),
+                        key=None,
+                    )
                 )
-                for k in node.keywords
-            ]
-        )
-        self.value = basic.GSFunctionCall(
-            function=ValueVisitor.handle(self, node.func),
-            arguments=args,
-        )
+        for keyword in node.keywords:
+            arg_val = ValueVisitor.handle(self, keyword.value, self.context).value
+            if arg_val:
+                kwarg = arg_val
+            else:
+                kwarg = builder.ErrorBuilder(
+                    self._src,
+                    "BAD_ARG",
+                    argument=repr(keyword.value),
+                    key=keyword.arg,
+                )
+            if keyword.arg is None:
+                build.position_arguments.append(kwarg)
+            else:
+                build.named_arguments[str(keyword.arg)] = kwarg
+
+        self.value = build
 
     def visit_Compare(self, node: ast.Compare) -> None:
         """Visit a comparison."""
-        print(f"ExpressionVisitor.visit_Compare({node})")
+        print(f"ValueVisitor.visit_Compare({node})")
         self._one(node)
         comparators: list[tuple[ComparisonOpr, ValueVisitor]] = []
         if len(node.comparators) != len(node.ops):
@@ -183,7 +227,9 @@ class ValueVisitor(BaseVisitor):
                 )
                 opr = "(unknown)"
 
-            comparators.append((opr, ValueVisitor.handle(self, node.comparators[i])))
+            comparators.append(
+                (opr, ValueVisitor.handle(self, node.comparators[i], self.context))
+            )
         self.value = ComparisonExpr(
             left=ValueVisitor.handle(self, node.left),
             comparators=comparators,
@@ -191,36 +237,41 @@ class ValueVisitor(BaseVisitor):
 
     def visit_Constant(self, node: ast.Constant) -> None:
         """Visit a constant."""
-        print(f"ExpressionVisitor.visit_Constant({node})")
+        print(f"ValueVisitor.visit_Constant({node})")
         src = self._src.child_ast(node)
         self._one(node)
         if node.value == Ellipsis or isinstance(node.value, complex):
-            self._probs.add_err(
+            self.value = builder.ErrorBuilder(
                 src,
                 "INPUT-invalid-python-use",
                 text=ast.unparse(node),
             )
-            # self.value = basic.GSConstant(value=None)
             return
         if node.value is None:
-            self.value = basic.GSNull(src=src)
+            self.value = builder.StaticBuilder(basic.GSNull(src=src))
             return
         if isinstance(node.value, bool):
-            self.value = basic.GSConstantNumber(
-                src=src,
-                value=False if node.value == 0 else True,
+            self.value = builder.StaticBuilder(
+                basic.GSConstantNumber(
+                    src=src,
+                    value=False if node.value == 0 else True,
+                )
             )
             return
         if isinstance(node.value, int | float):
-            self.value = basic.GSConstantNumber(
-                src=src,
-                value=node.value,
+            self.value = builder.StaticBuilder(
+                basic.GSConstantNumber(
+                    src=src,
+                    value=node.value,
+                )
             )
             return
         if isinstance(node.value, str | bytes):
-            self.value = basic.GSConstantString(
-                src=src,
-                value=str(node.value),
+            self.value = builder.StaticBuilder(
+                basic.GSConstantString(
+                    src=src,
+                    value=str(node.value),
+                )
             )
             return
 
@@ -232,12 +283,71 @@ class ValueVisitor(BaseVisitor):
 
     def visit_Name(self, node: ast.Name) -> None:
         """Visit a name."""
-        print(f"ExpressionVisitor.visit_Constant({node})")
+        print(f"ValueVisitor.visit_Name({node})")
         self._one(node)
-        self.value = NameExpr(
+        # Don't know if this is a
+        # variable or function or other reference.
+        self.value = builder.VariableBuilder(
+            src=self._src.child_ast(node),
             name=str(node.id),
-            ctx=_as_ctx(node.ctx, self._src, node, self._probs),
+            context=self.context,
         )
+
+    def visit_JoinedStr(self, node: ast.JoinedStr) -> None:
+        """Visit an f-string."""
+        print(f"ValueVisitor.visit_JoinedStr({node})")
+        src = self._src.child_ast(node)
+        # This adds an extra do-nothing at the end, but that's fine.
+        self.value = builder.StaticBuilder(basic.GSConstantString(src=src, value=""))
+        for val in node.values:
+            el_src = self._src.child_ast(val)
+            next_el: builder.PyGsBuilder[basic.GSValue] | None = None
+            if isinstance(val, ast.Constant):
+                # Note: a bit of a duplicate of visit_Constant above.
+                if val.value == Ellipsis:
+                    next_el = builder.StaticBuilder(
+                        basic.GSConstantString(el_src, "...")
+                    )
+                elif isinstance(val.value, complex):
+                    next_el = builder.StaticBuilder(
+                        basic.GSConstantString(
+                            el_src, f"({val.value.real} + {val.value.imag}i)"
+                        )
+                    )
+                elif val.value is None:
+                    next_el = builder.StaticBuilder(basic.GSNull(el_src))
+                elif isinstance(val.value, bool):
+                    next_el = builder.StaticBuilder(
+                        basic.GSConstantNumber(
+                            el_src, False if val.value == 0 else True
+                        )
+                    )
+                elif isinstance(val.value, int | float):
+                    next_el = builder.StaticBuilder(
+                        basic.GSConstantNumber(el_src, val.value)
+                    )
+                elif isinstance(val.value, str | bytes):
+                    next_el = builder.StaticBuilder(
+                        basic.GSConstantString(el_src, str(val.value))
+                    )
+            elif isinstance(val, ast.FormattedValue):
+                if val.format_spec:
+                    self._probs.add_err(
+                        el_src,
+                        "BAD-USAGE-unhandled-format-in-f-string",
+                        spec=repr(val.format_spec),
+                    )
+                next_el = ValueVisitor.handle(self, val.value, self.context).value
+            else:
+                self._probs.add_err(
+                    el_src,
+                    "BAD-USAGE-unhandled-value-in-f-string",
+                    spec=repr(val),
+                )
+            joiner = builder.TwoArgumentBuilder.new_binary(el_src, "+")
+            joiner.left = self.value
+            joiner.right = next_el
+            self.value = joiner
 
     def _one(self, node: ast.AST) -> None:
         """Ensure only one node present."""
@@ -251,33 +361,76 @@ class ValueVisitor(BaseVisitor):
         self.value_source = self._src.child_ast(node)
 
 
-class BlockVisitor(BaseVisitor):
+class BlockVisitor(BaseVisitor[basic.GSBlock]):
     """Visits a block of statements."""
 
-    def __init__(self, src: Source, problems: Problems) -> None:
-        BaseVisitor.__init__(self, src, problems)
-        self.statements: list[basic.GSStatement] = []
-        self.functions: dict[str, FunctionVisitor] = {}
-        self.constants: dict[str, ConstantVisitor] = {}
+    @staticmethod
+    def handle(
+        parent: BaseVisitor, expr: Sequence[ast.stmt], context: vax.ValueContext
+    ) -> builder.BlockBuilder:
+        """Handle this expression."""
+        vis = BlockVisitor(src=parent._src, problems=parent._probs, context=context)
+        for statement in expr:
+            vis.visit(statement)
+        return builder.BlockBuilder(src=vis._src, statements=vis.statements)
 
-        # contains (import name, as name)
-        self.imports: list[tuple[str, str]] = []
+    def __init__(
+        self, src: Source, context: vax.ValueContext, problems: Problems
+    ) -> None:
+        BaseVisitor.__init__(self, src, problems)
+        self.statements: list[builder.PyGsBuilder[basic.GSStatement]] = []
+        self.context = context
+
+    def finalize(self) -> basic.GSBlock | None:
+        """Finalize the GSElement."""
+        statements: list[basic.GSStatement] = []
+        is_ok = True
+        for stmt_builder in self.statements:
+            stmt = stmt_builder.build(self._probs)
+            if stmt is None:
+                is_ok = False
+            else:
+                # Python-ism: if a statement is just a constant string, then it's a document string
+                # and can be ignored.
+                if not isinstance(stmt, basic.GSConstantString):
+                    statements.append(stmt)
+        if not is_ok:
+            return None
+        return basic.GSBlock(src=self._src, statements=statements)
 
     def visit_Expr(self, node: ast.Expr) -> None:
         """Visit an expression."""
         print(f"BlockVisitor.visit_Expr({node})")
-        visitor = ValueVisitor.handle(self, node)
-        self.statements.append(visitor)
+        visitor = ValueVisitor.handle(self, node, self.context)
+        if visitor.value:
+            self.statements.append(visitor.value)
+
+    def visit_Return(self, node: ast.Return) -> None:
+        """Visit a return statement."""
+        print(f"BlockVisitor.visit_Return({node})")
+        src = self._src.child_ast(node)
+        if node.value is not None:
+            build = builder.OneArgumentBuilder.new_return_value(src)
+            build.argument = ValueVisitor.handle(self, node.value, self.context).value
+            self.statements.append(build)
+        else:
+            self.statements.append(
+                builder.StaticBuilder(basic.GSReturn(src=src, value=None))
+            )
 
     def visit_If(self, node: ast.If) -> None:
         """Visit an If block."""
         print(f"BlockVisitor.visit_If({node})")
-        body = BlockVisitor(self._src.child_ast(node), self._probs)
+        body = BlockVisitor(
+            self._src.child_ast(node), self.context.enter(), self._probs
+        )
         for body_node in node.body:
             body.visit(body_node)
         or_else: BlockVisitor | None = None
         if node.orelse:
-            or_else = BlockVisitor(self._src.child_ast(node), self._probs)
+            or_else = BlockVisitor(
+                self._src.child_ast(node), self.context.enter(), self._probs
+            )
             for or_else_node in node.orelse:
                 or_else.visit(or_else_node)
         self.statements.append(
@@ -305,32 +458,78 @@ class BlockVisitor(BaseVisitor):
                 "Value assignment only allows name target.",
             )
             return
-        value = ValueVisitor(
-            parent=src,
-            expr=node.value,
-            problems=self._probs,
+        gs_var = basic.GSVariableRef(src=src, name=target.id)
+        self.context.add(
+            src, target.id, vax.VariableValue(target.id, "func"), self._probs
         )
-        value.visit(node.value)
-        self.statements.append(
-            basic.GSValueAssignment(
-                src=src,
-                name=target.id,
-                value=value.value,
-            )
+        build = builder.TwoArgumentBuilder.new_assign(src)
+        build.left = builder.StaticBuilder(gs_var)
+        build.right = ValueVisitor.handle(self, node.value, self.context).value
+        self.statements.append(build)
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+        """Visit a FunctionDef block."""
+        print(f"BlockVisitor.visit_FunctionDef({node})")
+        src = self._src.child_ast(node)
+        if node.decorator_list:
+            self._probs.add_err(src, "ERROR-bad-usage-decorator", name=node.name)
+        gs_callable = basic.GSFunctionRef(src=src, name=node.name)
+        ctx_args: list[vax.Argument] = []
+        gs_args: list[tuple[str, basic.GSValue | None]] = []
+        # node.args contains all the argument stuff in Python.
+        # Only a subset are currently supported.
+        #  - args: list of normal, named arguments (ast.arg)
+        #  - defaults: list of ?
+        #  - kw_defaults: list of ?
+        #  - kwarg: ?
+        #  - kwonlyargs: list of ?
+        #  - posonlyargs: list of ? (arguments after '/').
+        #  - vararg: ?
+        for idx in range(len(node.args.args)):
+            node_arg = node.args.args[idx]
+            # arg_type: str | None = None
+            # if node_arg.annotation:
+            #    arg_type = node_arg.annotation.id
+            # Can also look at type_comment for the comment's type declaration.
+            arg_name = node_arg.arg
+            # These don't have default values.
+            ctx_args.append(vax.Argument(arg_name, idx, None))
+            gs_args.append((arg_name, None))
+        # FIXME handle others.
+        ctx_callable = vax.FuncValue(
+            source_name=node.name, value=gs_callable, arguments=ctx_args
         )
-        print(f"Added statement")
+        # GS has functions definitions marked as value assignments.
+        # This is now callable to other things within this block, and to inside the body.
+        self.context.add(src, node.name, ctx_callable, self._probs)
+
+        body = builder.OneArgumentBuilder.new_function_def(src, gs_args)
+        body.argument = BlockVisitor.handle(self, node.body, self.context)
+
+        build = builder.TwoArgumentBuilder.new_assign(src)
+        build.left = builder.StaticBuilder(gs_callable)
+        build.right = body
+        self.statements.append(build)
 
     def visit_Import(self, node: ast.Import) -> None:
         """Visit a simple import."""
         print(f"BlockVisitor.visit_Import({node})")
         for name in node.names:
-            self.imports.append((name, name))
+            self._import((name.name,), name.name)
 
     def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
         """Visit a "from ... import ..." statement"""
         print(f"BlockVisitor.visit_ImportFrom({node})")
         for name in node.names:
-            self.imports.append((f"{node.module}.{name}", name))
+            self._import((*node.module.split("."), name.name), name.asname)
+
+    def _import(self, name: Sequence[str], as_name: str) -> None:
+        """Import the name as a name (possibly the same)."""
+        if name[0] == MODULE_GREYHACK:
+            item, problems = vax.get(GREYHACK_CONTENTS.contents, name[1:])
+            self._probs.add_from(problems)
+            if item is not None:
+                self.context.add(as_name, item)
 
 
 class ClassVisitor(BaseVisitor):
@@ -349,7 +548,12 @@ class ModuleVisitor(BlockVisitor):
     """Receives Python top-level module events."""
 
     def __init__(self, src: Source, problems: Problems, module_name: str) -> None:
-        BlockVisitor.__init__(self, src, problems)
+        BlockVisitor.__init__(
+            self,
+            src=src,
+            context=create_base_context(),
+            problems=problems,
+        )
         self.module_name = module_name
 
 

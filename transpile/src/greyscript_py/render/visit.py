@@ -1,11 +1,19 @@
 """Perform the rendering visitation."""
 
-from greyscript_py.ast import basic
-from greyscript_py.render.abc import (
+from .abc import (
     StatementRenderVisitor,
     ValueRenderVisitor,
     BlockStatementRenderVisitor,
 )
+from ..ast import basic
+
+
+def render_block(
+        block: basic.GSBlock, visitor: StatementRenderVisitor
+) -> None:
+    """Pass the block through the visitor."""
+    for stmt in block.statements:
+        render_statement(stmt, visitor)
 
 
 def render_statement(
@@ -13,17 +21,21 @@ def render_statement(
 ) -> None:
     """Pass the statement through the visitor."""
     match statement:
-        case basic.GSValueAssignment(v_a):
-            srv = visitor.render_statement(v_a.src)
-            srv.render_fragments(v_a.src, v_a.name, "=")
-            render_value(v_a.value, srv.render_sub_value(v_a.src))
-        case basic.GSFunctionCall(f_c):
-            render_value(f_c, visitor.render_statement(f_c.src))
-        case basic.GSReturn(ret_s):
-            srv = visitor.render_statement(ret_s.src)
-            srv.render_fragments(ret_s.src, "return")
-            if ret_s.value is not None:
-                render_value(ret_s.value, srv.render_sub_value(ret_s.src))
+        case basic.GSValueAssignment(src=src, name=name, value=value):
+            srv = visitor.render_statement(src)
+            srv.render_fragments(src, name, "=")
+            render_value(value, srv.render_sub_value(src))
+        case basic.GSFunctionCall(src=src, func=f_c_func, parameters=f_c_params):
+            # There has GOT to be a better way to do this.
+            render_value(
+                basic.GSFunctionCall(src=src, func=f_c_func, parameters=f_c_params),
+                visitor.render_statement(src),
+            )
+        case basic.GSReturn(src=src, value=ret_s):
+            srv = visitor.render_statement(src)
+            srv.render_fragments(src, "return")
+            if ret_s is not None:
+                render_value(ret_s, srv.render_sub_value(src))
         case basic.GSBreak(b_s):
             srv = visitor.render_statement(b_s.src)
             srv.render_fragments(b_s.src, "break")
@@ -36,6 +48,9 @@ def render_statement(
             srv.render_fragments(imp.src, "import", "(")
             srv.render_string(imp.src, imp.path)
             srv.render_fragments(imp.src, ")")
+        case basic.GSBlock(src=_src, statements=b_s):
+            for stmt in b_s:
+                render_statement(stmt, visitor)
         case basic.GSWhileBlock(w_s):
             block_start = visitor.render_block(w_s.src, "while")
             render_value(w_s.block.condition, block_start.render_sub_value(w_s.src))
@@ -81,37 +96,37 @@ def render_statement(
 def render_value(value: basic.GSValue, visitor: ValueRenderVisitor) -> None:
     """Pass the value through the visitor."""
     match value:
-        case basic.GSConstantNumber(n_v):
-            visitor.render_fragments(n_v.src, str(n_v.value))
-        case basic.GSConstantString(s_v):
-            visitor.render_string(s_v.src, s_v.value)
-        case basic.GSFunctionDef(fd_v):
-            block_start = visitor.render_block(fd_v.src, "function")
+        case basic.GSConstantNumber(src=src, value=n_v):
+            visitor.render_fragments(src, str(n_v))
+        case basic.GSConstantString(src=src, value=s_v):
+            visitor.render_string(src, s_v)
+        case basic.GSFunctionDef(src=src, parameter_pairs=fd_pp, statements=fd_stmts):
+            block_start = visitor.render_block(src, "function")
             first = True
             # Wrapping parenthesis after the 'function' declaration are optional if
             # there are no parameters, similar to a function call having an optional "(" wrapper.
-            for name, default in fd_v.parameter_pairs:
+            for name, default in fd_pp:
                 if first:
                     first = False
-                    block_start.render_fragments(fd_v.src, "(")
+                    block_start.render_fragments(src, "(")
                 else:
-                    block_start.render_fragments(fd_v.src, ",")
-                block_start.render_fragments(fd_v.src, name)
+                    block_start.render_fragments(src, ",")
+                block_start.render_fragments(src, name)
                 if default:
                     block_start.render_fragments(default.src, "=")
                     render_value(default, block_start.render_sub_value(default.src))
             if not first:
-                block_start.render_fragments(fd_v.src, ")")
-            block_statements = block_start.end_start(fd_v.src)
-            for statement in fd_v.statements:
+                block_start.render_fragments(src, ")")
+            block_statements = block_start.end_start(src)
+            for statement in fd_stmts.statements:
                 render_statement(statement, block_statements)
-            block_statements.end_block(fd_v.src)
-        case basic.GSNull(nul_v):
-            visitor.render_fragments(nul_v.src, "null")
-        case basic.GSMap(m_v):
-            visitor.render_fragments(m_v.src, "{")
+            block_statements.end_block(src)
+        case basic.GSNull(src=src):
+            visitor.render_fragments(src, "null")
+        case basic.GSMap(src=src, items=m_v):
+            visitor.render_fragments(src, "{")
             first = True
-            for pair in m_v.items:
+            for pair in m_v:
                 if first:
                     first = False
                 else:
@@ -119,40 +134,40 @@ def render_value(value: basic.GSValue, visitor: ValueRenderVisitor) -> None:
                 render_value(pair.key, visitor.render_sub_value(pair.key.src))
                 visitor.render_fragments(pair.src, ":")
                 render_value(pair.value, visitor.render_sub_value(pair.value.src))
-            visitor.render_fragments(m_v.src, "}")
-        case basic.GSList(l_v):
-            visitor.render_fragments(l_v.src, "[")
+            visitor.render_fragments(src, "}")
+        case basic.GSList(src=src, items=l_v):
+            visitor.render_fragments(src, "[")
             first = True
-            for item in l_v.items:
+            for item in l_v:
                 if first:
                     first = False
                 else:
                     visitor.render_fragments(item.src, ",")
                 render_value(item, visitor.render_sub_value(item.src))
-            visitor.render_fragments(l_v.src, "]")
-        case basic.GSVariableRef(r_v) | basic.GSTypeRef(r_v):
-            visitor.render_fragments(r_v.src, r_v.name)
-        case basic.GSFunctionRef(fr_v):
-            visitor.render_fragments(fr_v.src, "@", fr_v.name)
-        case basic.GSFunctionCall(fc_v):
-            render_value(fc_v.func, visitor.render_sub_value(fc_v.src))
+            visitor.render_fragments(src, "]")
+        case basic.GSVariableRef(src=src, name=r_v) | basic.GSTypeRef(src=src, name=r_v):
+            visitor.render_fragments(src, r_v)
+        case basic.GSFunctionRef(src=src, name=fr_v):
+            visitor.render_fragments(src, "@", fr_v)
+        case basic.GSFunctionCall(src=src, func=fc_name, parameters=fc_parms):
+            render_value(fc_name, visitor.render_sub_value(src))
             # Here, the () wrap is optional.  The renderer should add them
             # if there is a fragment between open and close.
-            visitor.render_fragments(fc_v.src, "(")
+            visitor.render_fragments(src, "(")
             first = True
-            for param in fc_v.parameters:
+            for param in fc_parms:
                 if first:
                     first = False
                 else:
-                    visitor.render_fragments(fc_v.src, ",")
-                render_value(param, visitor.render_sub_value(fc_v.src))
-            visitor.render_fragments(fc_v.src, ")")
-        case basic.GSBinaryOperation(b_v):
-            render_value(b_v.left, visitor.render_sub_value(b_v.src))
-            visitor.render_fragments(b_v.src, b_v.operator)
-            render_value(b_v.right, visitor.render_sub_value(b_v.src))
-        case basic.GSUnaryOperation(u_v):
-            visitor.render_fragments(u_v.src, u_v.operator)
-            render_value(u_v.value, visitor.render_sub_value(u_v.src))
+                    visitor.render_fragments(src, ",")
+                render_value(param, visitor.render_sub_value(src))
+            visitor.render_fragments(src, ")")
+        case basic.GSBinaryOperation(src=src, left=b_l, right=b_r, operator=b_o):
+            render_value(b_l, visitor.render_sub_value(src))
+            visitor.render_fragments(src, b_o)
+            render_value(b_r, visitor.render_sub_value(src))
+        case basic.GSUnaryOperation(src=src, value=u_v, operator=u_o):
+            visitor.render_fragments(src, u_o)
+            render_value(u_v, visitor.render_sub_value(src))
         case other:
             raise ValueError(f"invalid value type {other}")
