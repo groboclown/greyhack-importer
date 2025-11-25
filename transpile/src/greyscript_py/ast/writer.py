@@ -1,46 +1,13 @@
 """Turn the AST into a JSON file."""
 
 from . import basic
-from ..util.jdata import DictJsonData, ListJsonData
+from ..util.jdata import DictJsonData, ListJsonData, JsonData
 from ..util.source import Source
 
 
 def to_json(ast: basic.GSBlock) -> DictJsonData:
     """Convert the top-level AST block into a JSON data."""
     return _from_GSBlock(ast)
-
-
-def _from_GSBlock(ast: basic.GSBlock) -> DictJsonData:
-    """Convert the GSBlock."""
-    statements: ListJsonData = []
-    for statement in ast.statements:
-        statements.append(_from_GSElement(statement))
-    return {
-        "src": _from_Source(ast.src),
-        "type": "block",
-        "statement_list": statements,
-    }
-
-
-def _from_GSFunctionDef(ast: basic.GSFunctionDef) -> DictJsonData:
-    """Convert the GSFunctionDef into a JSON data."""
-    return {
-        "src": _from_Source(ast.src),
-        "type": "function",
-        "name_value_list": [
-            {"name": n[0], "value": _from_GSElement(n[1])} for n in ast.parameter_pairs
-        ],
-        "statement_list": [_from_GSElement(s) for s in ast.statements.statements],
-    }
-
-
-def _from_GSFunctionRef(ast: basic.GSFunctionRef) -> DictJsonData:
-    """Convert the GSFunctionRef into a JSON data."""
-    return {
-        "src": _from_Source(ast.src),
-        "type": "funcref",
-        "name": ast.name,
-    }
 
 
 def _from_GSElement(ast: basic.GSElement | None) -> DictJsonData | None:
@@ -65,8 +32,7 @@ def _from_GSElement(ast: basic.GSElement | None) -> DictJsonData | None:
         return _from_GSVariableRef(ast)
     if isinstance(ast, basic.GSList):
         return _from_GSList(ast)
-    if isinstance(ast, basic.GSKeyPair):
-        return _from_GSKeyPair(ast)
+    # if isinstance(ast, basic.GSKeyPair): Not a stand-alone item
     if isinstance(ast, basic.GSMap):
         return _from_GSMap(ast)
     if isinstance(ast, basic.GSMemberReference):
@@ -87,8 +53,7 @@ def _from_GSElement(ast: basic.GSElement | None) -> DictJsonData | None:
         return _from_GSContinue(ast)
     if isinstance(ast, basic.GSImport):
         return _from_GSImport(ast)
-    if isinstance(ast, basic.GSConditionStatementsBlock):
-        return _from_GSConditionStatementsBlock(ast)
+    # if isinstance(ast, basic.GSConditionStatementsBlock): Not a stand-alone item
     if isinstance(ast, basic.GSWhileBlock):
         return _from_GSWhileBlock(ast)
     if isinstance(ast, basic.GSForBlock):
@@ -96,6 +61,44 @@ def _from_GSElement(ast: basic.GSElement | None) -> DictJsonData | None:
     if isinstance(ast, basic.GSIfBlock):
         return _from_GSIfBlock(ast)
     raise NotImplementedError(repr(ast))
+
+
+def _from_GSBlock(ast: basic.GSBlock) -> DictJsonData:
+    statements: list[JsonData] = []
+    for statement in ast.statements:
+        statements.append(_from_GSElement(statement))
+    return {
+        "src": _from_Source(ast.src),
+        "type": "block",
+        "statement_list": statements,
+    }
+
+
+def _from_GSFunctionDef(ast: basic.GSFunctionDef) -> DictJsonData:
+    return {
+        "src": _from_Source(ast.src),
+        "type": "function",
+        "name_value_list": [
+            {"name": n[0], "value": _from_GSElement(n[1])} for n in ast.parameter_pairs
+        ],
+        "statement_list": [_from_GSElement(s) for s in ast.statements.statements],
+    }
+
+
+def _from_GSFunctionRef(ast: basic.GSFunctionRef) -> DictJsonData:
+    return {
+        "src": _from_Source(ast.src),
+        "type": "funcref",
+        "name": ast.name,
+    }
+
+
+def _from_GSTypeRef(ast: basic.GSTypeRef) -> DictJsonData:
+    return {
+        "src": _from_Source(ast.src),
+        "type": "type",
+        "name": ast.name,
+    }
 
 
 def _from_GSConstantString(ast: basic.GSConstantString) -> DictJsonData:
@@ -114,11 +117,43 @@ def _from_GSConstantNumber(ast: basic.GSConstantNumber) -> DictJsonData:
     }
 
 
+def _from_GSNull(ast: basic.GSNull) -> DictJsonData:
+    return {
+        "src": _from_Source(ast.src),
+        "type": "null",
+    }
+
+
 def _from_GSVariableRef(ast: basic.GSVariableRef) -> DictJsonData:
     return {
         "src": _from_Source(ast.src),
         "type": "var",
         "name": ast.name,
+    }
+
+
+def _from_GSList(ast: basic.GSList) -> DictJsonData:
+    return {
+        "src": _from_Source(ast.src),
+        "type": "list",
+        "value_list": [_from_GSElement(e) for e in ast.items],
+    }
+
+
+def _from_GSMap(ast: basic.GSMap) -> DictJsonData:
+    return {
+        "src": _from_Source(ast.src),
+        "type": "map",
+        "map": [[_from_GSElement(p.key), _from_GSElement(p.value)] for p in ast.items],
+    }
+
+
+def _from_GSMemberReference(ast: basic.GSMemberReference) -> DictJsonData:
+    return {
+        "src": _from_Source(ast.src),
+        "type": "memref",
+        "value": _from_GSElement(ast.value),
+        "name": ast.member,
     }
 
 
@@ -131,6 +166,15 @@ def _from_GSBinaryOperation(ast: basic.GSBinaryOperation) -> DictJsonData:
             _from_GSElement(ast.left),
             _from_GSElement(ast.right),
         ],
+    }
+
+
+def _from_GSUnaryOperation(ast: basic.GSUnaryOperation) -> DictJsonData:
+    return {
+        "src": _from_Source(ast.src),
+        "type": "unary",
+        "name": ast.operator,
+        "value": _from_GSElement(ast.value),
     }
 
 
@@ -162,6 +206,62 @@ def _from_GSReturn(ast: basic.GSReturn) -> DictJsonData:
         "src": _from_Source(ast.src),
         "type": "retval",
         "value": _from_GSElement(ast.value),
+    }
+
+
+def _from_GSBreak(ast: basic.GSBreak) -> DictJsonData:
+    return {
+        "src": _from_Source(ast.src),
+        "type": "break",
+    }
+
+
+def _from_GSContinue(ast: basic.GSContinue) -> DictJsonData:
+    return {
+        "src": _from_Source(ast.src),
+        "type": "continue",
+    }
+
+
+def _from_GSImport(ast: basic.GSImport) -> DictJsonData:
+    return {
+        "src": _from_Source(ast.src),
+        "type": "import",
+        "str": ast.path,
+    }
+
+
+def _from_GSWhileBlock(ast: basic.GSWhileBlock) -> DictJsonData:
+    return {
+        "src": _from_Source(ast.src),
+        "type": "while",
+        "value": _from_GSElement(ast.block.condition),
+        "statement_list": [_from_GSElement(s) for s in ast.block.statements],
+    }
+
+
+def _from_GSForBlock(ast: basic.GSForBlock) -> DictJsonData:
+    return {
+        "src": _from_Source(ast.src),
+        "type": "for",
+        "value": _from_GSElement(ast.value),
+        "statement_list": [_from_GSElement(s) for s in ast.statements.statements],
+    }
+
+
+def _from_GSIfBlock(ast: basic.GSIfBlock) -> DictJsonData:
+    return {
+        "src": _from_Source(ast.src),
+        "type": "if",
+        # if_blocks
+        "if": [
+            {
+                "value": _from_GSElement(s.condition),
+                "statement_list": [_from_GSElement(b) for b in s.statements.statements],
+            }
+            for s in ast.if_blocks
+        ],
+        "statement_list": [_from_GSElement(s) for s in ast.else_statements.statements],
     }
 
 

@@ -1,6 +1,6 @@
 """Basic data model for allowing transformations of the AST."""
 
-from ..ast.basic import GSElement
+from greyscript_py.ast.basic import GSElement
 
 NodePathEntry = tuple[str, int]
 NodePath = list[NodePathEntry]

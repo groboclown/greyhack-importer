@@ -3,8 +3,8 @@
 from types import TracebackType
 from typing import NamedTuple
 
-from greyscript_py.transform.model import RenderVisitor, StatementRenderVisitor
 from greyscript_py.util.source import Source
+from transpile.transform import RenderVisitor, StatementRenderVisitor
 
 
 class CapturedToken(NamedTuple):

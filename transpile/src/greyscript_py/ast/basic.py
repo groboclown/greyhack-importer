@@ -1,16 +1,9 @@
 """The basic elements of the GreyScript language."""
 
 from collections.abc import Sequence
-from typing import NamedTuple, Protocol, runtime_checkable
+from typing import NamedTuple
 
 from ..util.source import Source
-
-
-@runtime_checkable
-class GSElement(Protocol):
-    """All elements in the script must conform to this."""
-
-    src: Source
 
 
 class GSConstantString(NamedTuple):
@@ -261,3 +254,32 @@ GSStatement = (
     | GSIfBlock
 )
 # assert isinstance(GSStatement, GSElement)
+
+
+# Every kind of type.
+GSElement = (
+    GSConstantString
+    | GSConstantNumber
+    | GSNull
+    | GSBlock
+    | GSFunctionDef
+    | GSFunctionRef
+    | GSTypeRef
+    | GSVariableRef
+    | GSList
+    # | GSKeyPair
+    | GSMap
+    | GSMemberReference
+    | GSBinaryOperation
+    | GSUnaryOperation
+    | GSFunctionCall
+    | GSValueAssignment
+    | GSReturn
+    | GSBreak
+    | GSContinue
+    | GSImport
+    # | GSConditionStatementsBlock
+    | GSWhileBlock
+    | GSForBlock
+    | GSIfBlock
+)

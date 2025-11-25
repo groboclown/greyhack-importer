@@ -3,6 +3,7 @@
 from collections.abc import Callable
 from typing import Literal, cast
 
+from greyscript_py.ast import basic
 from .helpers import SimpleScriptNode, NodeListOwner
 from .model import (
     ScriptNode,
@@ -11,7 +12,6 @@ from .model import (
     NodePtrOwner,
     NodePathEntry,
 )
-from ..ast import basic
 
 TFConstantType = Literal["string", "number", "null"]
 

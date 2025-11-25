@@ -2,6 +2,7 @@
 
 from typing import TypeVar
 
+from greyscript_py.ast.basic import GSElement
 from .model import (
     NodePath,
     ScriptNode,
@@ -10,7 +11,6 @@ from .model import (
     NodePathEntry,
     VariableDecl,
 )
-from ..ast.basic import GSElement
 
 
 def is_path_substr(current: NodePath, check: NodePath) -> bool:

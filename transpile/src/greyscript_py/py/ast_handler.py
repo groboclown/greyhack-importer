@@ -40,7 +40,7 @@ def visit_parsed_file(filename: str, code: ast.AST) -> ScriptFile:
             vis.visit(item)
         block = vis.finalize()
         if block:
-            statements.append(block)
+            statements.extend(block.statements)
         print(f"Added {len(statements)} statements")
     else:
         problems.add_err(src.from_ast(code), "BUG-parse-file", ast_type=str(type(code)))

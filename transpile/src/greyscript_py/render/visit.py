@@ -36,59 +36,59 @@ def render_statement(
             srv.render_fragments(src, "return")
             if ret_s is not None:
                 render_value(ret_s, srv.render_sub_value(src))
-        case basic.GSBreak(b_s):
-            srv = visitor.render_statement(b_s.src)
-            srv.render_fragments(b_s.src, "break")
-        case basic.GSContinue(c_s):
-            srv = visitor.render_statement(c_s.src)
-            srv.render_fragments(c_s.src, "continue")
-        case basic.GSImport(imp):
-            srv = visitor.render_statement(imp.src)
+        case basic.GSBreak(src=src):
+            srv = visitor.render_statement(src)
+            srv.render_fragments(src, "break")
+        case basic.GSContinue(src=src):
+            srv = visitor.render_statement(src)
+            srv.render_fragments(src, "continue")
+        case basic.GSImport(src=src, path=imp):
+            srv = visitor.render_statement(src)
             # Format is very precise here.
-            srv.render_fragments(imp.src, "import", "(")
-            srv.render_string(imp.src, imp.path)
-            srv.render_fragments(imp.src, ")")
+            srv.render_fragments(src, "import", "(")
+            srv.render_string(src, imp)
+            srv.render_fragments(src, ")")
         case basic.GSBlock(src=_src, statements=b_s):
             for stmt in b_s:
                 render_statement(stmt, visitor)
-        case basic.GSWhileBlock(w_s):
-            block_start = visitor.render_block(w_s.src, "while")
-            render_value(w_s.block.condition, block_start.render_sub_value(w_s.src))
-            block_statements = block_start.end_start(w_s.src)
-            for statement in w_s.block.statements:
+        case basic.GSWhileBlock(src=src, block=w_s):
+            block_start = visitor.render_block(src, "while")
+            render_value(w_s.condition, block_start.render_sub_value(src))
+            block_statements = block_start.end_start(src)
+            for statement in w_s.statements:
                 render_statement(statement, block_statements)
-            block_statements.end_block(w_s.src)
-        case basic.GSForBlock(for_s):
-            block_start = visitor.render_block(for_s.src, "for")
-            block_start.render_fragments(for_s.src, for_s.name, "=")
-            render_value(for_s.value, block_start.render_sub_value(for_s.src))
-            block_statements = block_start.end_start(for_s.src)
-            for statement in for_s.statements:
+            block_statements.end_block(src)
+        case basic.GSForBlock(src=src, name=for_s_name, value=for_s_value, statements=for_s_stmts):
+            block_start = visitor.render_block(src, "for")
+            block_start.render_fragments(src, for_s_name, "=")
+            render_value(for_s_value, block_start.render_sub_value(src))
+            block_statements = block_start.end_start(src)
+            for statement in for_s_stmts:
                 render_statement(statement, block_statements)
-            block_statements.end_block(for_s.src)
-        case basic.GSIfBlock(i_s):
-            block_start = visitor.render_block(i_s.src, "if")
-            block_statements: BlockStatementRenderVisitor | None = None
+            block_statements.end_block(src)
+        case basic.GSIfBlock(src=src, if_blocks=i_s_if_blocks, else_statements=i_s_else_stmts):
+            block_start = visitor.render_block(src, "if")
+            n_block_statements: BlockStatementRenderVisitor | None = None
             first = True
-            for condition_section in i_s.if_blocks:
+            for condition_section in i_s_if_blocks:
                 if first:
                     first = False
                 else:
-                    assert block_statements is not None
-                    block_start = block_statements.continue_block(
+                    assert n_block_statements is not None
+                    block_start = n_block_statements.continue_block(
                         condition_section.src, "else", "if"
                     )
-                render_value(condition_section, block_start)
+                render_value(condition_section.condition, block_start)
                 block_statements = block_start.end_start(condition_section.src)
                 for statement in condition_section.statements:
                     render_statement(statement, block_statements)
 
-            assert block_statements is not None
-            if i_s.else_statements:
-                block_statements.continue_block(i_s.src, "else")
-                for statement in i_s.else_statements.statements:
-                    render_statement(statement, block_statements)
-            block_statements.end_block(i_s.src)
+            assert n_block_statements is not None
+            if i_s_else_stmts:
+                n_block_statements.continue_block(src, "else")
+                for statement in i_s_else_stmts.statements:
+                    render_statement(statement, n_block_statements)
+            n_block_statements.end_block(src)
         case other:
             raise ValueError(f"invalid block type {other}")
 

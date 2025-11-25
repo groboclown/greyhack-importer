@@ -1,5 +1,6 @@
 {
   "print": {
-    "$kind": "concat-func"
+    "$kind": "concat-func",
+    "operator": "+"
   }
 }

@@ -1,5 +1,7 @@
 """A GreyHack script AST."""
 
+from greyscript_py.ast.basic import GSElement, GSStatement, GSBlock
+from greyscript_py.util.problems import Problems
 from .helpers import NodeListOwner
 from .model import (
     ScriptNode,
@@ -9,8 +11,6 @@ from .model import (
     VariableDecl,
     NodePathEntry,
 )
-from ..ast.basic import GSElement, GSStatement, GSBlock
-from ..util.problems import Problems
 
 
 class GreyHackScript(ScriptNode):

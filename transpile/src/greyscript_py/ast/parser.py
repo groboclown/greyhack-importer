@@ -1,7 +1,9 @@
 """Parse the AST from a JSON like structure."""
 
 from collections.abc import Sequence
-from typing import NamedTuple, Literal
+from typing import NamedTuple, Literal, TypeVar, cast
+
+T = TypeVar("T", covariant=True)
 
 from .basic import (
     GSStatement,
@@ -29,6 +31,8 @@ from .basic import (
     GSMap,
     GSBinaryOperation,
     GSUnaryOperation,
+    GSMemberReference,
+    GSCallableValue,
 )
 from ..util.jdata import DictJsonData
 from ..util.problems import Problems
@@ -46,7 +50,7 @@ def parse_source(
             data_path=[],
             problems=problems,
         )
-    )
+    ).statements
 
 
 NodeKey = Literal[
@@ -156,12 +160,12 @@ class DataNode(NamedTuple):
     key_value_pairs: Sequence[tuple[DictJsonData, DictJsonData]] | None
     present_keys: Sequence[NodeKey]
     bad_keys: Sequence[NodeKey | tuple[NodeKey, int]]
-    unknown_keys: Sequence[NodeKey]
+    unknown_keys: Sequence[str]
     node_path: Sequence[str | int]
 
     @staticmethod
     def new(
-        data: DictJsonData, filename: str, node_path: list[str | int]
+        data: DictJsonData, filename: str, node_path: Sequence[str | int]
     ) -> "DataNode":
         """Create a new data node."""
 
@@ -180,7 +184,7 @@ class DataNode(NamedTuple):
         key_value_pairs: list[tuple[DictJsonData, DictJsonData]] | None = None
         present_keys: list[NodeKey] = []
         bad_keys: list[NodeKey | tuple[NodeKey, int]] = []
-        unknown_keys: list[NodeKey] = []
+        unknown_keys: list[str] = []
 
         for data_entry in data.items():
             match data_entry:
@@ -189,10 +193,10 @@ class DataNode(NamedTuple):
                     source_set = True
                     source = Source.new(
                         filename=str(source_data.get("f", filename)),
-                        start_line=int(source_data.get("sl", 0)),
-                        start_col=int(source_data.get("sc", 0)),
-                        end_line=int(source_data.get("el", 0)),
-                        end_col=int(source_data.get("ec", 0)),
+                        start_line=_as_int(source_data, "sl"),
+                        start_col=_as_int(source_data, "sc"),
+                        end_line=_as_int(source_data, "el"),
+                        end_col=_as_int(source_data, "ec"),
                     )
                 case ("src", _):
                     bad_keys.append(NODE_KEY_SRC)
@@ -203,7 +207,7 @@ class DataNode(NamedTuple):
                         or node_type_val in ValueNodeTypeNames
                     ):
                         present_keys.append(NODE_KEY_TYPE)
-                        node_type = node_type_val
+                        node_type = cast(NodeType | UnknownNodeType, node_type_val)
                     else:
                         bad_keys.append(NODE_KEY_TYPE)
                 case ("type", _):
@@ -422,11 +426,11 @@ class ParseData(NamedTuple):
                 path=key_path,
                 reason="bad key contents",
             )
-        for key in node.unknown_keys:
+        for u_key in node.unknown_keys:
             problems.add_err(
                 source,
                 "INPUT-invalid-ast-format",
-                path=[*data_path, key],
+                path=[*data_path, u_key],
                 reason="unknown key",
             )
         return ParseData(
@@ -481,7 +485,7 @@ class ParseData(NamedTuple):
                     None
                     if self.node.name_value_list[i][1] is None
                     else self.sub(
-                        self.node.name_value_list[i][1],
+                        _not_none(self.node.name_value_list[i][1]),
                         [NODE_KEY_NAME_VALUE_LIST, i, 1],
                     )
                 ),
@@ -521,12 +525,12 @@ class ParseData(NamedTuple):
             problems=self.problems,
         )
 
-    def expect(self, *keys: NodeKey) -> bool:
+    def expect(self, *e_keys: NodeKey) -> bool:
         """Expect exactly these keys, and return True if valid, False if invalid.
 
         This always includes the required 'source' and 'type' keys.
         """
-        keys = list({*keys, "src", "type"})
+        keys: list[NodeKey] = list({*e_keys, "src", "type"})
         missing, extra = self.node.expect(keys)
         ret = True
         for key in missing:
@@ -537,11 +541,9 @@ class ParseData(NamedTuple):
             ret = False
         return ret
 
-    def add_err(
-        self, sub_key: NodeKey | int | list[NodeKey | int], reason: str
-    ) -> None:
+    def add_err(self, sub_key: str | int | list[str | int], reason: str) -> None:
         """Add an error to the problems."""
-        path = list(self.data_path)
+        path: list[str | int] = list(self.data_path)
         if isinstance(sub_key, str | int):
             path.append(sub_key)
         else:
@@ -581,13 +583,21 @@ def _parse_block(p_data: ParseData) -> GSBlock:
                     )
             case "runcall":
                 if n_data.expect(NODE_KEY_VALUE_LIST, NODE_KEY_VALUE):
-                    ret.append(
-                        GSFunctionCall(
-                            src=n_data.node.source,
-                            func=_parse_value_node(n_data.value),
-                            parameters=[_parse_value_node(v) for v in n_data.values],
+                    func = _parse_value_node(n_data.value)
+                    if not isinstance(func, GSCallableValue):
+                        n_data.add_err(
+                            sub_key="value", reason="function must be callable value"
                         )
-                    )
+                    else:
+                        ret.append(
+                            GSFunctionCall(
+                                src=n_data.node.source,
+                                func=func,
+                                parameters=[
+                                    _parse_value_node(v) for v in n_data.values
+                                ],
+                            )
+                        )
             case "import":
                 if n_data.expect(NODE_KEY_STR):
                     ret.append(
@@ -648,9 +658,9 @@ def _parse_block(p_data: ParseData) -> GSBlock:
                     )
             case "block":
                 if n_data.expect(NODE_KEY_STATEMENT_LIST):
-                    ret.append(_parse_block(n_data))
+                    ret.extend(_parse_block(n_data).statements)
             case key:
-                n_data.add_err([key], "invalid statement type")
+                n_data.add_err(key, "invalid statement type")
 
     return GSBlock(
         src=p_data.data_source,
@@ -678,7 +688,10 @@ def _parse_value_node(p_data: ParseData) -> GSValue:
             if p_data.expect(NODE_KEY_NAME_VALUE_LIST, NODE_KEY_STATEMENT_LIST):
                 return GSFunctionDef(
                     src=p_data.node.source,
-                    parameter_pairs=p_data.name_value_list,
+                    parameter_pairs=[
+                        (p[0], None if p[1] is None else _parse_value_node(p[1]))
+                        for p in p_data.name_value_list
+                    ],
                     statements=_parse_block(p_data),
                 )
         case "var":
@@ -690,6 +703,13 @@ def _parse_value_node(p_data: ParseData) -> GSValue:
         case "funcref":
             if p_data.expect(NODE_KEY_NAME):
                 return GSFunctionRef(src=p_data.node.source, name=p_data.name)
+        case "memref":
+            if p_data.expect(NODE_KEY_NAME, NODE_KEY_VALUE):
+                return GSMemberReference(
+                    src=p_data.node.source,
+                    value=_parse_value_node(p_data.value),
+                    member=p_data.node.name,
+                )
         case "list":
             if p_data.expect(NODE_KEY_VALUE_LIST):
                 return GSList(
@@ -711,9 +731,16 @@ def _parse_value_node(p_data: ParseData) -> GSValue:
                 )
         case "valuecall":
             if p_data.expect(NODE_KEY_VALUE, NODE_KEY_VALUE_LIST):
+                func = _parse_value_node(p_data.value)
+                if not isinstance(func, GSCallableValue):
+                    p_data.add_err(
+                        ["valuecall", "value"],
+                        "callable must be of type callable value",
+                    )
+                    func = GSVariableRef(src=p_data.data_source, name="bad")
                 return GSFunctionCall(
                     src=p_data.node.source,
-                    func=_parse_value_node(p_data.value),
+                    func=func,
                     parameters=[_parse_value_node(v) for v in p_data.values],
                 )
         case "binary":
@@ -736,9 +763,21 @@ def _parse_value_node(p_data: ParseData) -> GSValue:
                 return GSUnaryOperation(
                     src=p_data.node.source,
                     operator=p_data.name,
-                    value=p_data.value,
+                    value=_parse_value_node(p_data.value),
                 )
         case key:
             p_data.add_err(NODE_KEY_TYPE, f"unsupported value type {key}")
     # Fallback for an invalid value.
     return GSNull(src=p_data.node.source)
+
+
+def _as_int(data: DictJsonData, key: str) -> int:
+    val = data.get(key, 0)
+    if isinstance(val, int | float):
+        return int(val)
+    raise ValueError(f"unsupported value type {key}")
+
+
+def _not_none(v: T | None) -> T:
+    assert v is not None  # nosec  # for mypy
+    return v

@@ -1,5 +1,9 @@
 """JSON-like structure handlers."""
 
-JsonData = int | str | float | bool | None | list["JsonData"] | dict[str, "JsonData"]
+from collections.abc import Sequence
+
+JsonData = (
+    int | str | float | bool | None | Sequence["JsonData"] | dict[str, "JsonData"]
+)
 DictJsonData = dict[str, JsonData]
-ListJsonData = list[JsonData]
+ListJsonData = Sequence[JsonData]

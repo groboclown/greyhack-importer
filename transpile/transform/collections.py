@@ -3,6 +3,7 @@
 from collections.abc import Callable
 from typing import cast
 
+from greyscript_py.ast.basic import GSElement
 from .helpers import NodeListOwner
 from .model import (
     ScriptNode,
@@ -11,7 +12,6 @@ from .model import (
     NodePtrOwner,
     NodePathEntry,
 )
-from ..ast.basic import GSElement
 
 
 class TFListValue(ScriptNode):

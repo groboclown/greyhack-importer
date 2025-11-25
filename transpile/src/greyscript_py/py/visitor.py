@@ -82,7 +82,7 @@ class ValueVisitor(BaseVisitor[basic.GSValue]):
         self.context = context
         self.value: builder.PyGsBuilder[basic.GSValue] | None = None
 
-    def finalize(self) -> T | None:
+    def finalize(self) -> basic.GSValue | None:
         """Finalize the GSElement."""
         if self._has_problems:
             return None
@@ -401,9 +401,9 @@ class BlockVisitor(BaseVisitor[basic.GSBlock]):
     def visit_Expr(self, node: ast.Expr) -> None:
         """Visit an expression."""
         print(f"BlockVisitor.visit_Expr({node})")
-        visitor = ValueVisitor.handle(self, node, self.context)
-        if visitor.value:
-            self.statements.append(visitor.value)
+        val = ValueVisitor.handle(self, node, self.context).value
+        if val is not None:
+            self.statements.append(val)
 
     def visit_Return(self, node: ast.Return) -> None:
         """Visit a return statement."""
@@ -421,25 +421,17 @@ class BlockVisitor(BaseVisitor[basic.GSBlock]):
     def visit_If(self, node: ast.If) -> None:
         """Visit an If block."""
         print(f"BlockVisitor.visit_If({node})")
-        body = BlockVisitor(
-            self._src.child_ast(node), self.context.enter(), self._probs
-        )
-        for body_node in node.body:
-            body.visit(body_node)
-        or_else: BlockVisitor | None = None
+        if_builder = builder.IfBuilder(self._src.child_ast(node))
+
+        # The primary if block.
+        primary = builder.ConditionBuilder(self._src.child_ast(node))
+        primary.condition = ValueVisitor.handle(self, node.test, self.context).value
+        primary.block = BlockVisitor.handle(self, node.body, self.context)
+        if_builder.if_blocks.append(primary)
         if node.orelse:
-            or_else = BlockVisitor(
-                self._src.child_ast(node), self.context.enter(), self._probs
-            )
-            for or_else_node in node.orelse:
-                or_else.visit(or_else_node)
-        self.statements.append(
-            basic.GSIfBlock(
-                test=ValueVisitor.handle(self, node.test),
-                body=body,
-                or_else=or_else,
-            )
-        )
+            # FIXME how to handle elif blocks?
+            if_builder.else_block = BlockVisitor.handle(self, node.orelse, self.context)
+        self.statements.append(if_builder)
 
     def visit_Assign(self, node: ast.Assign) -> None:
         """Visit an Assign block."""
@@ -520,8 +512,14 @@ class BlockVisitor(BaseVisitor[basic.GSBlock]):
     def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
         """Visit a "from ... import ..." statement"""
         print(f"BlockVisitor.visit_ImportFrom({node})")
-        for name in node.names:
-            self._import((*node.module.split("."), name.name), name.asname)
+        if node.module is not None:
+            for name in node.names:
+                self._import((*node.module.split("."), name.name), name.asname)
+        else:
+            self._probs.add_warn(
+                self._src.child_ast(node),
+                "BUG-import-from-has-none-module",
+            )
 
     def _import(self, name: Sequence[str], as_name: str) -> None:
         """Import the name as a name (possibly the same)."""
@@ -529,19 +527,7 @@ class BlockVisitor(BaseVisitor[basic.GSBlock]):
             item, problems = vax.get(GREYHACK_CONTENTS.contents, name[1:])
             self._probs.add_from(problems)
             if item is not None:
-                self.context.add(as_name, item)
-
-
-class ClassVisitor(BaseVisitor):
-    """Visits a class object."""
-
-
-class LambdaVisitor:
-    """Visits a lambda expression."""
-
-
-class ConstantVisitor:
-    """Visits a constant value."""
+                self.context.add(self._src, as_name, item, self._probs)
 
 
 class ModuleVisitor(BlockVisitor):
@@ -555,18 +541,6 @@ class ModuleVisitor(BlockVisitor):
             problems=problems,
         )
         self.module_name = module_name
-
-
-class FunctionVisitor(BlockVisitor):
-    """Receives Python function events."""
-
-    def __init__(self, func_name: str, func_args: list[str]) -> None:
-        BlockVisitor.__init__(self)
-        self.func_name = func_name
-        self.func_args = func_args
-
-    def visit_FunctionType(self, node: ast.FunctionType) -> None:
-        """Visit old-style type comments for a function."""
 
 
 def _as_ctx(
@@ -712,4 +686,7 @@ class ExampleVisitor(ast.NodeVisitor):
     def visit_AugLoad(self, node: AugLoad) -> Any: ...
     def visit_AugStore(self, node: AugStore) -> Any: ...
     def visit_Param(self, node: Param) -> Any: ...
+    
+    # visit method for old-style type comments
+    def visit_FunctionType(self, node: ast.FunctionType) -> None:
 """

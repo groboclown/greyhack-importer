@@ -22,7 +22,7 @@ class Argument(NamedTuple):
     """
 
     name: str | None
-    index: int | None
+    arg_index: int | None
     default: basic.GSValue | None
 
 
@@ -66,15 +66,15 @@ class FuncValue(CallableValue):
         problems = Problems()
         for pos in range(len(self.arguments)):
             arg = self.arguments[pos]
-            if arg.index is not None:
-                if 0 <= arg.index < len(position_arguments):
-                    params.append(position_arguments[arg.index])
+            if arg.arg_index is not None:
+                if 0 <= arg.arg_index < len(position_arguments):
+                    params.append(position_arguments[arg.arg_index])
                 else:
                     problems.add_err(
                         source,
                         "USAGE-bad-call-position-arg",
                         func=self.source_name,
-                        index=arg.index,
+                        index=arg.arg_index,
                     )
             elif arg.name is not None:
                 if arg.name in named_arguments:
@@ -187,7 +187,7 @@ class ValueContext:
         self, src: Source, named_as: str, value: ContextItem, problems: Problems
     ) -> None:
         """Mark a value in the context."""
-        existing = self._values.get(value.source_name)
+        existing = self._values.get(named_as)
         if existing is not None:
             if not isinstance(existing, value.__class__):
                 problems.add_warn(
@@ -266,7 +266,7 @@ def get(
         problems.add_err(
             Source.new("block context", 0, 0, 0, 0),
             "USAGE-bad-name-path",
-            path=name_path,
-            bad_path=bad_path,
+            path=list(name_path),
+            bad_path=list(bad_path),
         )
     return (ctx, problems)
